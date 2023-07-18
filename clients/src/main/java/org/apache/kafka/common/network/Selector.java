@@ -66,10 +66,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * <pre>
  * nioSelector.connect(&quot;42&quot;, new InetSocketAddress(&quot;google.com&quot;, server.port), 64000, 64000);
  * </pre>
- *
+ * <p>
  * The connect call does not block on the creation of the TCP connection, so the connect method only begins initiating
  * the connection. The successful invocation of this method does not mean a valid connection has been established.
- *
+ * <p>
  * Sending requests, receiving responses, processing connection completions, and disconnections on the existing
  * connections are all done using the <code>poll()</code> call.
  *
@@ -78,10 +78,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * nioSelector.send(new NetworkSend(myOtherDestination, myOtherBytes));
  * nioSelector.poll(TIMEOUT_MS);
  * </pre>
- *
+ * <p>
  * The nioSelector maintains several lists that are reset by each call to <code>poll()</code> which are available via
  * various getters. These are reset by each call to <code>poll()</code>.
- *
+ * <p>
  * This class is not thread safe!
  */
 public class Selector implements Selectable, AutoCloseable {
@@ -131,31 +131,33 @@ public class Selector implements Selectable, AutoCloseable {
 
     /**
      * Create a new nioSelector
-     * @param maxReceiveSize Max size in bytes of a single network receive (use {@link NetworkReceive#UNLIMITED} for no limit)
-     * @param connectionMaxIdleMs Max idle connection time (use {@link #NO_IDLE_TIMEOUT_MS} to disable idle timeout)
+     *
+     * @param maxReceiveSize              Max size in bytes of a single network receive (use {@link NetworkReceive#UNLIMITED} for no limit)
+     * @param connectionMaxIdleMs         Max idle connection time (use {@link #NO_IDLE_TIMEOUT_MS} to disable idle timeout)
      * @param failedAuthenticationDelayMs Minimum time by which failed authentication response and channel close should be delayed by.
      *                                    Use {@link #NO_FAILED_AUTHENTICATION_DELAY} to disable this delay.
-     * @param metrics Registry for Selector metrics
-     * @param time Time implementation
-     * @param metricGrpPrefix Prefix for the group of metrics registered by Selector
-     * @param metricTags Additional tags to add to metrics registered by Selector
-     * @param metricsPerConnection Whether or not to enable per-connection metrics
-     * @param channelBuilder Channel builder for every new connection
-     * @param logContext Context for logging with additional info
+     * @param metrics                     Registry for Selector metrics
+     * @param time                        Time implementation
+     * @param metricGrpPrefix             Prefix for the group of metrics registered by Selector
+     * @param metricTags                  Additional tags to add to metrics registered by Selector
+     * @param metricsPerConnection        Whether or not to enable per-connection metrics
+     * @param channelBuilder              Channel builder for every new connection
+     * @param logContext                  Context for logging with additional info
      */
     public Selector(int maxReceiveSize,
-            long connectionMaxIdleMs,
-            int failedAuthenticationDelayMs,
-            Metrics metrics,
-            Time time,
-            String metricGrpPrefix,
-            Map<String, String> metricTags,
-            boolean metricsPerConnection,
-            boolean recordTimePerConnection,
-            ChannelBuilder channelBuilder,
-            MemoryPool memoryPool,
-            LogContext logContext) {
+                    long connectionMaxIdleMs,
+                    int failedAuthenticationDelayMs,
+                    Metrics metrics,
+                    Time time,
+                    String metricGrpPrefix,
+                    Map<String, String> metricTags,
+                    boolean metricsPerConnection,
+                    boolean recordTimePerConnection,
+                    ChannelBuilder channelBuilder,
+                    MemoryPool memoryPool,
+                    LogContext logContext) {
         try {
+            // 1 打开一个 NIO Selector
             this.nioSelector = java.nio.channels.Selector.open();
         } catch (IOException e) {
             throw new KafkaException(e);
@@ -165,7 +167,9 @@ public class Selector implements Selectable, AutoCloseable {
         this.channels = new HashMap<>();
         this.explicitlyMutedChannels = new HashSet<>();
         this.outOfMemory = false;
+        // 2 返回结果给客户端成功
         this.completedSends = new ArrayList<>();
+        // 3 接收到客户端发送数据
         this.completedReceives = new LinkedHashMap<>();
         this.immediatelyConnectedKeys = new HashSet<>();
         this.closingChannels = new HashMap<>();
@@ -238,12 +242,13 @@ public class Selector implements Selectable, AutoCloseable {
      * <p>
      * Note that this call only initiates the connection, which will be completed on a future {@link #poll(long)}
      * call. Check {@link #connected()} to see which (if any) connections have completed after a given poll call.
-     * @param id The id for the new connection
-     * @param address The address to connect to
-     * @param sendBufferSize The send buffer for the new connection
+     *
+     * @param id                The id for the new connection
+     * @param address           The address to connect to
+     * @param sendBufferSize    The send buffer for the new connection
      * @param receiveBufferSize The receive buffer for the new connection
      * @throws IllegalStateException if there is already a connection for that id
-     * @throws IOException if DNS resolution fails on the hostname or if the broker is down
+     * @throws IOException           if DNS resolution fails on the hostname or if the broker is down
      */
     @Override
     public void connect(String id, InetSocketAddress address, int sendBufferSize, int receiveBufferSize) throws IOException {
@@ -308,6 +313,7 @@ public class Selector implements Selectable, AutoCloseable {
      */
     public void register(String id, SocketChannel socketChannel) throws IOException {
         ensureNotRegistered(id);
+        // SocketChannel 注册 OP_READ 事件
         registerChannel(id, socketChannel, SelectionKey.OP_READ);
         this.sensors.connectionCreated.record();
         // Default to empty client information as the ApiVersionsRequest is not
@@ -325,8 +331,11 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     protected SelectionKey registerChannel(String id, SocketChannel socketChannel, int interestedOps) throws IOException {
+        // 1 SocketChannel 注册事件(OP_READ、OP_WRITE)
         SelectionKey key = socketChannel.register(nioSelector, interestedOps);
+        // 2 将 SocketChannel 封装成 KafkaChannel
         KafkaChannel channel = buildAndAttachKafkaChannel(socketChannel, id, key);
+        // 3 缓存 KafkaChannel 与 ID 的映射关系
         this.channels.put(id, channel);
         if (idleExpiryManager != null)
             idleExpiryManager.update(channel.id(), time.nanoseconds());
@@ -336,7 +345,7 @@ public class Selector implements Selectable, AutoCloseable {
     private KafkaChannel buildAndAttachKafkaChannel(SocketChannel socketChannel, String id, SelectionKey key) throws IOException {
         try {
             KafkaChannel channel = channelBuilder.buildChannel(id, key, maxReceiveSize, memoryPool,
-                new SelectorChannelMetadataRegistry());
+                    new SelectorChannelMetadataRegistry());
             key.attach(channel);
             return channel;
         } catch (Exception e) {
@@ -381,16 +390,20 @@ public class Selector implements Selectable, AutoCloseable {
 
     /**
      * Queue the given request for sending in the subsequent {@link #poll(long)} calls
+     *
      * @param send The request to send
      */
     public void send(NetworkSend send) {
+        // 1 获取 SocketChannel 对应的 ID
         String connectionId = send.destinationId();
+        // 2 根据 SocketChannel 对应的 ID 获取 KafkaChannel
         KafkaChannel channel = openOrClosingChannelOrFail(connectionId);
         if (closingChannels.containsKey(connectionId)) {
             // ensure notification via `disconnected`, leave channel in the state in which closing was triggered
             this.failedSends.add(connectionId);
         } else {
             try {
+                // 3 KafkaChannel 设置返回给客户端数据 NetworkSend 并注册 OP_WRITE 事件
                 channel.setSend(send);
             } catch (Exception e) {
                 // update the state for consistency, the channel will be discarded after `close`
@@ -410,12 +423,12 @@ public class Selector implements Selectable, AutoCloseable {
     /**
      * Do whatever I/O can be done on each connection without blocking. This includes completing connections, completing
      * disconnections, initiating new sends, or making progress on in-progress sends or receives.
-     *
+     * <p>
      * When this call is completed the user can check for completed sends, receives, connections or disconnects using
      * {@link #completedSends()}, {@link #completedReceives()}, {@link #connected()}, {@link #disconnected()}. These
      * lists will be cleared at the beginning of each `poll` call and repopulated by the call if there is
      * any completed I/O.
-     *
+     * <p>
      * In the "Plaintext" setting, we are using socketChannel to read & write to the network. But for the "SSL" setting,
      * we encrypt the data before we use socketChannel to write data to the network, and decrypt before we return the responses.
      * This requires additional buffers to be maintained as we are reading from network, since the data on the wire is encrypted
@@ -425,7 +438,7 @@ public class Selector implements Selectable, AutoCloseable {
      * in the buffer. To overcome this issue we added "keysWithBufferedRead" map which tracks channels which have data in the SSL
      * buffers. If there are channels with buffered data that can by processed, we set "timeout" to 0 and process the data even
      * if there is no more data to read from the socket.
-     *
+     * <p>
      * Atmost one entry is added to "completedReceives" for a channel in each poll. This is necessary to guarantee that
      * requests from a channel are processed on the broker in the order they are sent. Since outstanding requests added
      * by SocketServer to the request queue may be processed by different request handler threads, requests on each
@@ -433,8 +446,8 @@ public class Selector implements Selectable, AutoCloseable {
      *
      * @param timeout The amount of time to wait, in milliseconds, which must be non-negative
      * @throws IllegalArgumentException If `timeout` is negative
-     * @throws IllegalStateException If a send is given for which we have no existing connection or for which there is
-     *         already an in-progress send
+     * @throws IllegalStateException    If a send is given for which we have no existing connection or for which there is
+     *                                  already an in-progress send
      */
     @Override
     public void poll(long timeout) throws IOException {
@@ -462,11 +475,13 @@ public class Selector implements Selectable, AutoCloseable {
 
         /* check ready keys */
         long startSelect = time.nanoseconds();
+        // 1 从 NIO Selector 获取 SelectionKey 个数
         int numReadyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
 
         if (numReadyKeys > 0 || !immediatelyConnectedKeys.isEmpty() || dataInBuffers) {
+            // 2 获取 SelectionKey 集合
             Set<SelectionKey> readyKeys = this.nioSelector.selectedKeys();
 
             // Poll from channels that have buffered data (but nothing more from the underlying socket)
@@ -478,6 +493,7 @@ public class Selector implements Selectable, AutoCloseable {
             }
 
             // Poll from channels where the underlying socket has more data
+            // 3 处理 OP_READ 事件和 OP_WRITE 事件
             pollSelectionKeys(readyKeys, false, endSelect);
             // Clear all selected keys so that they are included in the ready count for the next select
             readyKeys.clear();
@@ -501,15 +517,17 @@ public class Selector implements Selectable, AutoCloseable {
 
     /**
      * handle any ready I/O on a set of selection keys
-     * @param selectionKeys set of keys to handle
+     *
+     * @param selectionKeys          set of keys to handle
      * @param isImmediatelyConnected true if running over a set of keys for just-connected sockets
-     * @param currentTimeNanos time at which set of keys was determined
+     * @param currentTimeNanos       time at which set of keys was determined
      */
     // package-private for testing
     void pollSelectionKeys(Set<SelectionKey> selectionKeys,
                            boolean isImmediatelyConnected,
                            long currentTimeNanos) {
         for (SelectionKey key : determineHandlingOrder(selectionKeys)) {
+            // 1 根据 SelectionKey 获取对应 KafkaChannel
             KafkaChannel channel = channel(key);
             long channelStartTimeNanos = recordTimePerConnection ? time.nanoseconds() : 0;
             boolean sendFailed = false;
@@ -548,21 +566,22 @@ public class Selector implements Selectable, AutoCloseable {
                             sensors.successfulReauthentication.record(1.0, readyTimeMs);
                             if (channel.reauthenticationLatencyMs() == null)
                                 log.warn(
-                                    "Should never happen: re-authentication latency for a re-authenticated channel was null; continuing...");
+                                        "Should never happen: re-authentication latency for a re-authenticated channel was null; continuing...");
                             else
                                 sensors.reauthenticationLatency
-                                    .record(channel.reauthenticationLatencyMs().doubleValue(), readyTimeMs);
+                                        .record(channel.reauthenticationLatencyMs().doubleValue(), readyTimeMs);
                         } else {
                             sensors.successfulAuthentication.record(1.0, readyTimeMs);
                             if (!channel.connectedClientSupportsReauthentication())
                                 sensors.successfulAuthenticationNoReauth.record(1.0, readyTimeMs);
                         }
                         log.debug("Successfully {}authenticated with {}", isReauthentication ?
-                            "re-" : "", channel.socketDescription());
+                                "re-" : "", channel.socketDescription());
                     }
                 }
                 if (channel.ready() && channel.state() == ChannelState.NOT_CONNECTED)
                     channel.state(ChannelState.READY);
+
                 Optional<NetworkReceive> responseReceivedDuringReauthentication = channel.pollResponseReceivedDuringReauthentication();
                 responseReceivedDuringReauthentication.ifPresent(receive -> {
                     long currentTimeMs = time.milliseconds();
@@ -571,8 +590,10 @@ public class Selector implements Selectable, AutoCloseable {
 
                 //if channel is ready and has bytes to read from socket or buffer, and has no
                 //previous completed receive then read from it
+                // 2 检查到 OP_READ 事件 表示客户端发送数据过来
                 if (channel.ready() && (key.isReadable() || channel.hasBytesBuffered()) && !hasCompletedReceive(channel)
                         && !explicitlyMutedChannels.contains(channel)) {
+                    // 读取 KafkaChannel 数据 NetworkReceive 缓存在
                     attemptRead(channel);
                 }
 
@@ -590,6 +611,7 @@ public class Selector implements Selectable, AutoCloseable {
 
                 long nowNanos = channelStartTimeNanos != 0 ? channelStartTimeNanos : currentTimeNanos;
                 try {
+                    // 3 如果检查到 OP_WRITE 事件 往客户端返回数据
                     attemptWrite(key, channel, nowNanos);
                 } catch (Exception e) {
                     sendFailed = true;
@@ -614,7 +636,7 @@ public class Selector implements Selectable, AutoCloseable {
                     if (e instanceof DelayedResponseAuthenticationException)
                         exceptionMessage = e.getCause().getMessage();
                     log.info("Failed {}authentication with {} ({})", isReauthentication ? "re-" : "",
-                        desc, exceptionMessage);
+                            desc, exceptionMessage);
                 } else {
                     log.warn("Unexpected error from {}; closing connection", desc, e);
                 }
@@ -632,16 +654,22 @@ public class Selector implements Selectable, AutoCloseable {
     private void attemptWrite(SelectionKey key, KafkaChannel channel, long nowNanos) throws IOException {
         if (channel.hasSend()
                 && channel.ready()
+                // OP_WRITE 事件
                 && key.isWritable()
                 && !channel.maybeBeginClientReauthentication(() -> nowNanos)) {
+            // 返回客户端数据
             write(channel);
         }
     }
 
     // package-private for testing
     void write(KafkaChannel channel) throws IOException {
+        // 1 获取 KafkaChannel 对应的 ID
         String nodeId = channel.id();
+        // 2 往客户端写数据 NetworkSend
         long bytesSent = channel.write();
+        // 3 判断是否写完数据给客户端
+        // 如果写完数据给客户端 则注销 OP_WRITE 事件并返回 NetworkSend
         NetworkSend send = channel.maybeCompleteSend();
         // We may complete the send with bytesSent < 1 if `TransportLayer.hasPendingWrites` was true and `channel.write()`
         // caused the pending writes to be written to the socket channel buffer
@@ -650,6 +678,7 @@ public class Selector implements Selectable, AutoCloseable {
             if (bytesSent > 0)
                 this.sensors.recordBytesSent(nodeId, bytesSent, currentTimeMs);
             if (send != null) {
+                // 4 表示 NetworkSend 已经发送成功给客户端
                 this.completedSends.add(send);
                 this.sensors.recordCompletedSend(nodeId, send.size(), currentTimeMs);
             }
@@ -676,9 +705,10 @@ public class Selector implements Selectable, AutoCloseable {
             long currentTimeMs = time.milliseconds();
             sensors.recordBytesReceived(nodeId, bytesReceived, currentTimeMs);
             madeReadProgressLastPoll = true;
-
+            // 1 读取 KafkaChannel 数据 NetworkReceive
             NetworkReceive receive = channel.maybeCompleteReceive();
             if (receive != null) {
+                // 2 缓存读取数据到 completedReceives 集合
                 addToCompletedReceives(channel, receive, currentTimeMs);
             }
         }
@@ -915,7 +945,7 @@ public class Selector implements Selectable, AutoCloseable {
      * are processed. The channel is closed when there are no outstanding receives or if a send is
      * requested. For other values of `closeMode`, outstanding receives are discarded and the channel
      * is closed immediately.
-     *
+     * <p>
      * The channel will be added to disconnect list when it is actually closed if `closeMode.notifyDisconnect`
      * is true.
      */
@@ -1009,10 +1039,10 @@ public class Selector implements Selectable, AutoCloseable {
 
     /**
      * Returns the lowest priority channel chosen using the following sequence:
-     *   1) If one or more channels are in closing state, return any one of them
-     *   2) If idle expiry manager is enabled, return the least recently updated channel
-     *   3) Otherwise return any of the channels
-     *
+     * 1) If one or more channels are in closing state, return any one of them
+     * 2) If idle expiry manager is enabled, return the least recently updated channel
+     * 3) Otherwise return any of the channels
+     * <p>
      * This method is used to close a channel to accommodate a new channel on the inter-broker listener
      * when broker-wide `max.connections` limit is enabled.
      */
@@ -1049,7 +1079,7 @@ public class Selector implements Selectable, AutoCloseable {
     private void addToCompletedReceives(KafkaChannel channel, NetworkReceive networkReceive, long currentTimeMs) {
         if (hasCompletedReceive(channel))
             throw new IllegalStateException("Attempting to add second completed receive to channel " + channel.id());
-
+        // 接收到客户端发送过来的数据缓存在 completedReceives
         this.completedReceives.put(channel.id(), networkReceive);
         sensors.recordCompletedReceive(channel.id(), networkReceive.size(), currentTimeMs);
     }
@@ -1149,7 +1179,7 @@ public class Selector implements Selectable, AutoCloseable {
             this.perConnectionMetricGrpName = metricGrpPrefix + "-node-metrics";
             StringBuilder tagsSuffix = new StringBuilder();
 
-            for (Map.Entry<String, String> tag: metricTags.entrySet()) {
+            for (Map.Entry<String, String> tag : metricTags.entrySet()) {
                 tagsSuffix.append(tag.getKey());
                 tagsSuffix.append("-");
                 tagsSuffix.append(tag.getValue());
@@ -1233,22 +1263,22 @@ public class Selector implements Selectable, AutoCloseable {
             this.ioTime.add(createIOThreadRatioMeter(metrics, metricGrpName, metricTags, "io", "doing I/O"));
 
             this.connectionsByCipher = new IntGaugeSuite<>(log, "sslCiphers", metrics,
-                cipherInformation -> {
-                    Map<String, String> tags = new LinkedHashMap<>();
-                    tags.put("cipher", cipherInformation.cipher());
-                    tags.put("protocol", cipherInformation.protocol());
-                    tags.putAll(metricTags);
-                    return metrics.metricName("connections", metricGrpName, "The number of connections with this SSL cipher and protocol.", tags);
-                }, 100);
+                    cipherInformation -> {
+                        Map<String, String> tags = new LinkedHashMap<>();
+                        tags.put("cipher", cipherInformation.cipher());
+                        tags.put("protocol", cipherInformation.protocol());
+                        tags.putAll(metricTags);
+                        return metrics.metricName("connections", metricGrpName, "The number of connections with this SSL cipher and protocol.", tags);
+                    }, 100);
 
             this.connectionsByClient = new IntGaugeSuite<>(log, "clients", metrics,
-                clientInformation -> {
-                    Map<String, String> tags = new LinkedHashMap<>();
-                    tags.put("clientSoftwareName", clientInformation.softwareName());
-                    tags.put("clientSoftwareVersion", clientInformation.softwareVersion());
-                    tags.putAll(metricTags);
-                    return metrics.metricName("connections", metricGrpName, "The number of connections with this client and version.", tags);
-                }, 100);
+                    clientInformation -> {
+                        Map<String, String> tags = new LinkedHashMap<>();
+                        tags.put("clientSoftwareName", clientInformation.softwareName());
+                        tags.put("clientSoftwareVersion", clientInformation.softwareVersion());
+                        tags.putAll(metricTags);
+                        return metrics.metricName("connections", metricGrpName, "The number of connections with this client and version.", tags);
+                    }, 100);
 
             metricName = metrics.metricName("connection-count", metricGrpName, "The current number of active connections.", metricTags);
             topLevelMetricNames.add(metricName);
@@ -1256,24 +1286,24 @@ public class Selector implements Selectable, AutoCloseable {
         }
 
         private Meter createMeter(Metrics metrics, String groupName, Map<String, String> metricTags,
-                SampledStat stat, String baseName, String descriptiveName) {
+                                  SampledStat stat, String baseName, String descriptiveName) {
             MetricName rateMetricName = metrics.metricName(baseName + "-rate", groupName,
-                            String.format("The number of %s per second", descriptiveName), metricTags);
+                    String.format("The number of %s per second", descriptiveName), metricTags);
             MetricName totalMetricName = metrics.metricName(baseName + "-total", groupName,
-                            String.format("The total number of %s", descriptiveName), metricTags);
+                    String.format("The total number of %s", descriptiveName), metricTags);
             if (stat == null)
                 return new Meter(rateMetricName, totalMetricName);
             else
                 return new Meter(stat, rateMetricName, totalMetricName);
         }
 
-        private Meter createMeter(Metrics metrics, String groupName,  Map<String, String> metricTags,
-                String baseName, String descriptiveName) {
+        private Meter createMeter(Metrics metrics, String groupName, Map<String, String> metricTags,
+                                  String baseName, String descriptiveName) {
             return createMeter(metrics, groupName, metricTags, null, baseName, descriptiveName);
         }
 
-        private Meter createIOThreadRatioMeter(Metrics metrics, String groupName,  Map<String, String> metricTags,
-                String baseName, String action) {
+        private Meter createIOThreadRatioMeter(Metrics metrics, String groupName, Map<String, String> metricTags,
+                                               String baseName, String action) {
             MetricName rateMetricName = metrics.metricName(baseName + "-ratio", groupName,
                     String.format("The fraction of time the I/O thread spent %s", action), metricTags);
             MetricName totalMetricName = metrics.metricName(baseName + "time-total", groupName,
@@ -1396,6 +1426,7 @@ public class Selector implements Selectable, AutoCloseable {
 
         /**
          * Try to close this channel if the delay has expired.
+         *
          * @param currentTimeNanos The current time
          * @return True if the delay has expired and the channel was closed; false otherwise
          */

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -53,6 +53,7 @@ object RequestChannel extends Logging {
   def isRequestLoggingEnabled: Boolean = requestLogger.underlying.isDebugEnabled
 
   sealed trait BaseRequest
+
   case object ShutdownRequest extends BaseRequest
 
   case class Session(principal: KafkaPrincipal, clientAddress: InetAddress) {
@@ -74,7 +75,7 @@ object RequestChannel extends Logging {
     def apply(metricName: String): RequestMetrics = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
@@ -103,8 +104,8 @@ object RequestChannel extends Logging {
     // This is constructed on creation of a Request so that the JSON representation is computed before the request is
     // processed by the api layer. Otherwise, a ProduceRequest can occur without its data (ie. it goes into purgatory).
     val requestLog: Option[JsonNode] =
-      if (RequestChannel.isRequestLoggingEnabled) Some(RequestConvertToJson.request(loggableRequest))
-      else None
+    if (RequestChannel.isRequestLoggingEnabled) Some(RequestConvertToJson.request(loggableRequest))
+    else None
 
     def header: RequestHeader = context.header
 
@@ -338,21 +339,26 @@ class RequestChannel(val queueSize: Int,
                      val metricNamePrefix: String,
                      time: Time,
                      val metrics: RequestChannel.Metrics) extends KafkaMetricsGroup {
+
   import RequestChannel._
+
+  // 创建阻塞队列 ArrayBlockingQueue 默认容量为 500
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
+  // 创建缓存 Processor 映射容器
   private val processors = new ConcurrentHashMap[Int, Processor]()
+
   val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
 
   newGauge(requestQueueSizeMetricName, () => requestQueue.size)
-
   newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
 
   def addProcessor(processor: Processor): Unit = {
+    // RequestChannel 添加 Processor 映射
     if (processors.putIfAbsent(processor.id, processor) != null)
       warn(s"Unexpected processor with processorId ${processor.id}")
 
@@ -371,9 +377,9 @@ class RequestChannel(val queueSize: Int,
   }
 
   def closeConnection(
-    request: RequestChannel.Request,
-    errorCounts: java.util.Map[Errors, Integer]
-  ): Unit = {
+                       request: RequestChannel.Request,
+                       errorCounts: java.util.Map[Errors, Integer]
+                     ): Unit = {
     // This case is used when the request handler has encountered an error, but the client
     // does not expect a response (e.g. when produce request has acks set to 0)
     updateErrorMetrics(request.header.apiKey, errorCounts.asScala)
@@ -381,10 +387,10 @@ class RequestChannel(val queueSize: Int,
   }
 
   def sendResponse(
-    request: RequestChannel.Request,
-    response: AbstractResponse,
-    onComplete: Option[Send => Unit]
-  ): Unit = {
+                    request: RequestChannel.Request,
+                    response: AbstractResponse,
+                    onComplete: Option[Send => Unit]
+                  ): Unit = {
     updateErrorMetrics(request.header.apiKey, response.errorCounts.asScala)
     sendResponse(new RequestChannel.SendResponse(
       request,
@@ -521,10 +527,10 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
   // Temporary memory allocated for processing request (only populated for fetch and produce requests)
   // This shows the memory allocated for compression/conversions excluding the actual request size
   val tempMemoryBytesHist =
-    if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
-      Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
-    else
-      None
+  if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
+    Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
+  else
+    None
 
   private val errorMeters = mutable.Map[Errors, ErrorMeter]()
   Errors.values.foreach(error => errorMeters.put(error, new ErrorMeter(name, error)))
@@ -544,7 +550,7 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
       else {
         synchronized {
           if (meter == null)
-             meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }

@@ -6,14 +6,14 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
-*/
+ */
 package kafka.zk
 
 import java.nio.charset.StandardCharsets.UTF_8
@@ -53,9 +53,11 @@ import scala.util.{Failure, Success, Try}
 
 object ControllerZNode {
   def path = "/controller"
+
   def encode(brokerId: Int, timestamp: Long): Array[Byte] = {
     Json.encodeAsBytes(Map("version" -> 1, "brokerid" -> brokerId, "timestamp" -> timestamp.toString).asJava)
   }
+
   def decode(bytes: Array[Byte]): Option[Int] = Json.parseBytes(bytes).map { js =>
     js.asJsonObject("brokerid").to[Int]
   }
@@ -63,7 +65,9 @@ object ControllerZNode {
 
 object ControllerEpochZNode {
   def path = "/controller_epoch"
+
   def encode(epoch: Int): Array[Byte] = epoch.toString.getBytes(UTF_8)
+
   def decode(bytes: Array[Byte]): Int = new String(bytes, UTF_8).toInt
 }
 
@@ -77,6 +81,7 @@ object BrokersZNode {
 
 object BrokerIdsZNode {
   def path = s"${BrokersZNode.path}/ids"
+
   def encode: Array[Byte] = null
 }
 
@@ -85,7 +90,7 @@ object BrokerInfo {
   /**
    * - Create a broker info with v5 json format if the apiVersion is 2.7.x or above.
    * - Create a broker info with v4 json format (which includes multiple endpoints and rack) if
-   *   the apiVersion is 0.10.0.X or above but lesser than 2.7.x.
+   * the apiVersion is 0.10.0.X or above but lesser than 2.7.x.
    * - Register the broker with v2 json format otherwise.
    *
    * Due to KAFKA-3100, 0.9.0.0 broker and old clients will break if JSON version is above 2.
@@ -110,6 +115,7 @@ object BrokerInfo {
 
 case class BrokerInfo(broker: Broker, version: Int, jmxPort: Int) {
   val path: String = BrokerIdZNode.path(broker.id)
+
   def toJsonBytes: Array[Byte] = BrokerIdZNode.encode(this)
 }
 
@@ -170,72 +176,72 @@ object BrokerIdZNode {
       .get(FeaturesKey)
       .flatMap(_.to[Option[Map[String, Map[String, Int]]]])
       .map(theMap => theMap.map {
-         case(featureName, versionsInfo) => featureName -> versionsInfo.map {
-           case(label, version) => label -> version.asInstanceOf[Short]
-         }.toMap
+        case (featureName, versionsInfo) => featureName -> versionsInfo.map {
+          case (label, version) => label -> version.asInstanceOf[Short]
+        }.toMap
       }.toMap)
       .getOrElse(Map[String, Map[String, Short]]()))
   }
 
   /**
-    * Create a BrokerInfo object from id and JSON bytes.
-    *
-    * @param id
-    * @param jsonBytes
-    *
-    * Version 1 JSON schema for a broker is:
-    * {
-    *   "version":1,
-    *   "host":"localhost",
-    *   "port":9092
-    *   "jmx_port":9999,
-    *   "timestamp":"2233345666"
-    * }
-    *
-    * Version 2 JSON schema for a broker is:
-    * {
-    *   "version":2,
-    *   "host":"localhost",
-    *   "port":9092,
-    *   "jmx_port":9999,
-    *   "timestamp":"2233345666",
-    *   "endpoints":["PLAINTEXT://host1:9092", "SSL://host1:9093"]
-    * }
-    *
-    * Version 3 JSON schema for a broker is:
-    * {
-    *   "version":3,
-    *   "host":"localhost",
-    *   "port":9092,
-    *   "jmx_port":9999,
-    *   "timestamp":"2233345666",
-    *   "endpoints":["PLAINTEXT://host1:9092", "SSL://host1:9093"],
-    *   "rack":"dc1"
-    * }
-    *
-    * Version 4 JSON schema for a broker is:
-    * {
-    *   "version":4,
-    *   "host":"localhost",
-    *   "port":9092,
-    *   "jmx_port":9999,
-    *   "timestamp":"2233345666",
-    *   "endpoints":["CLIENT://host1:9092", "REPLICATION://host1:9093"],
-    *   "rack":"dc1"
-    * }
-    *
-    * Version 5 (current) JSON schema for a broker is:
-    * {
-    *   "version":5,
-    *   "host":"localhost",
-    *   "port":9092,
-    *   "jmx_port":9999,
-    *   "timestamp":"2233345666",
-    *   "endpoints":["CLIENT://host1:9092", "REPLICATION://host1:9093"],
-    *   "rack":"dc1",
-    *   "features": {"feature": {"min_version":1, "first_active_version":2, "max_version":3}}
-    * }
-    */
+   * Create a BrokerInfo object from id and JSON bytes.
+   *
+   * @param id
+   * @param jsonBytes
+   *
+   * Version 1 JSON schema for a broker is:
+   * {
+   * "version":1,
+   * "host":"localhost",
+   * "port":9092
+   * "jmx_port":9999,
+   * "timestamp":"2233345666"
+   * }
+   *
+   * Version 2 JSON schema for a broker is:
+   * {
+   * "version":2,
+   * "host":"localhost",
+   * "port":9092,
+   * "jmx_port":9999,
+   * "timestamp":"2233345666",
+   * "endpoints":["PLAINTEXT://host1:9092", "SSL://host1:9093"]
+   * }
+   *
+   * Version 3 JSON schema for a broker is:
+   * {
+   * "version":3,
+   * "host":"localhost",
+   * "port":9092,
+   * "jmx_port":9999,
+   * "timestamp":"2233345666",
+   * "endpoints":["PLAINTEXT://host1:9092", "SSL://host1:9093"],
+   * "rack":"dc1"
+   * }
+   *
+   * Version 4 JSON schema for a broker is:
+   * {
+   * "version":4,
+   * "host":"localhost",
+   * "port":9092,
+   * "jmx_port":9999,
+   * "timestamp":"2233345666",
+   * "endpoints":["CLIENT://host1:9092", "REPLICATION://host1:9093"],
+   * "rack":"dc1"
+   * }
+   *
+   * Version 5 (current) JSON schema for a broker is:
+   * {
+   * "version":5,
+   * "host":"localhost",
+   * "port":9092,
+   * "jmx_port":9999,
+   * "timestamp":"2233345666",
+   * "endpoints":["CLIENT://host1:9092", "REPLICATION://host1:9093"],
+   * "rack":"dc1",
+   * "features": {"feature": {"min_version":1, "first_active_version":2, "max_version":3}}
+   * }
+   */
   def decode(id: Int, jsonBytes: Array[Byte]): BrokerInfo = {
     Json.tryParseBytes(jsonBytes) match {
       case Right(js) =>
@@ -282,7 +288,9 @@ object TopicZNode {
   case class TopicIdReplicaAssignment(topic: String,
                                       topicId: Option[Uuid],
                                       assignment: Map[TopicPartition, ReplicaAssignment])
+
   def path(topic: String) = s"${TopicsZNode.path}/$topic"
+
   def encode(topicId: Option[Uuid],
              assignment: collection.Map[TopicPartition, ReplicaAssignment]): Array[Byte] = {
     val replicaAssignmentJson = mutable.Map[String, util.List[Int]]()
@@ -307,6 +315,7 @@ object TopicZNode {
 
     Json.encodeAsBytes(topicAssignment.asJava)
   }
+
   def decode(topic: String, bytes: Array[Byte]): TopicIdReplicaAssignment = {
     def getReplicas(replicasJsonOpt: Option[JsonObject], partition: String): Seq[Int] = {
       replicasJsonOpt match {
@@ -349,12 +358,14 @@ object TopicPartitionZNode {
 
 object TopicPartitionStateZNode {
   def path(partition: TopicPartition) = s"${TopicPartitionZNode.path(partition)}/state"
+
   def encode(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch): Array[Byte] = {
     val leaderAndIsr = leaderIsrAndControllerEpoch.leaderAndIsr
     val controllerEpoch = leaderIsrAndControllerEpoch.controllerEpoch
     Json.encodeAsBytes(Map("version" -> 1, "leader" -> leaderAndIsr.leader, "leader_epoch" -> leaderAndIsr.leaderEpoch,
       "controller_epoch" -> controllerEpoch, "isr" -> leaderAndIsr.isr.asJava).asJava)
   }
+
   def decode(bytes: Array[Byte], stat: Stat): Option[LeaderIsrAndControllerEpoch] = {
     Json.parseBytes(bytes).map { js =>
       val leaderIsrAndEpochInfo = js.asJsonObject
@@ -374,9 +385,11 @@ object ConfigEntityTypeZNode {
 
 object ConfigEntityZNode {
   def path(entityType: String, entityName: String) = s"${ConfigEntityTypeZNode.path(entityType)}/$entityName"
+
   def encode(config: Properties): Array[Byte] = {
     Json.encodeAsBytes(Map("version" -> 1, "config" -> config).asJava)
   }
+
   def decode(bytes: Array[Byte]): Properties = {
     val props = new Properties()
     if (bytes != null) {
@@ -395,7 +408,9 @@ object ConfigEntityChangeNotificationZNode {
 
 object ConfigEntityChangeNotificationSequenceZNode {
   val SequenceNumberPrefix = "config_change_"
+
   def createPath = s"${ConfigEntityChangeNotificationZNode.path}/$SequenceNumberPrefix"
+
   def encode(sanitizedEntityPath: String): Array[Byte] = Json.encodeAsBytes(
     Map("version" -> 2, "entity_path" -> sanitizedEntityPath).asJava)
 }
@@ -406,7 +421,9 @@ object IsrChangeNotificationZNode {
 
 object IsrChangeNotificationSequenceZNode {
   val SequenceNumberPrefix = "isr_change_"
+
   def path(sequenceNumber: String = "") = s"${IsrChangeNotificationZNode.path}/$SequenceNumberPrefix$sequenceNumber"
+
   def encode(partitions: collection.Set[TopicPartition]): Array[Byte] = {
     val partitionsJson = partitions.map(partition => Map("topic" -> partition.topic, "partition" -> partition.partition).asJava)
     Json.encodeAsBytes(Map("version" -> IsrChangeNotificationHandler.Version, "partitions" -> partitionsJson.asJava).asJava)
@@ -423,6 +440,7 @@ object IsrChangeNotificationSequenceZNode {
       }
     }
   }.map(_.toSet).getOrElse(Set.empty)
+
   def sequenceNumber(path: String) = path.substring(path.lastIndexOf(SequenceNumberPrefix) + SequenceNumberPrefix.length)
 }
 
@@ -433,13 +451,17 @@ object LogDirEventNotificationZNode {
 object LogDirEventNotificationSequenceZNode {
   val SequenceNumberPrefix = "log_dir_event_"
   val LogDirFailureEvent = 1
+
   def path(sequenceNumber: String) = s"${LogDirEventNotificationZNode.path}/$SequenceNumberPrefix$sequenceNumber"
+
   def encode(brokerId: Int) = {
     Json.encodeAsBytes(Map("version" -> 1, "broker" -> brokerId, "event" -> LogDirFailureEvent).asJava)
   }
+
   def decode(bytes: Array[Byte]): Option[Int] = Json.parseBytes(bytes).map { js =>
     js.asJsonObject("broker").to[Int]
   }
+
   def sequenceNumber(path: String) = path.substring(path.lastIndexOf(SequenceNumberPrefix) + SequenceNumberPrefix.length)
 }
 
@@ -457,25 +479,27 @@ object DeleteTopicsTopicZNode {
 
 /**
  * The znode for initiating a partition reassignment.
+ *
  * @deprecated Since 2.4, use the PartitionReassignment Kafka API instead.
  */
 object ReassignPartitionsZNode {
 
   /**
-    * The assignment of brokers for a `TopicPartition`.
-    *
-    * A replica assignment consists of a `topic`, `partition` and a list of `replicas`, which
-    * represent the broker ids that the `TopicPartition` is assigned to.
-    */
+   * The assignment of brokers for a `TopicPartition`.
+   *
+   * A replica assignment consists of a `topic`, `partition` and a list of `replicas`, which
+   * represent the broker ids that the `TopicPartition` is assigned to.
+   */
   case class ReplicaAssignment(@BeanProperty @JsonProperty("topic") topic: String,
                                @BeanProperty @JsonProperty("partition") partition: Int,
                                @BeanProperty @JsonProperty("replicas") replicas: java.util.List[Int])
 
   /**
-    * An assignment consists of a `version` and a list of `partitions`, which represent the
-    * assignment of topic-partitions to brokers.
-    * @deprecated Use the PartitionReassignment Kafka API instead
-    */
+   * An assignment consists of a `version` and a list of `partitions`, which represent the
+   * assignment of topic-partitions to brokers.
+   *
+   * @deprecated Use the PartitionReassignment Kafka API instead
+   */
   @Deprecated
   case class LegacyPartitionAssignment(@BeanProperty @JsonProperty("version") version: Int,
                                        @BeanProperty @JsonProperty("partitions") partitions: java.util.List[ReplicaAssignment])
@@ -501,11 +525,13 @@ object ReassignPartitionsZNode {
 
 object PreferredReplicaElectionZNode {
   def path = s"${AdminZNode.path}/preferred_replica_election"
+
   def encode(partitions: Set[TopicPartition]): Array[Byte] = {
     val jsonMap = Map("version" -> 1,
       "partitions" -> partitions.map(tp => Map("topic" -> tp.topic, "partition" -> tp.partition).asJava).asJava)
     Json.encodeAsBytes(jsonMap.asJava)
   }
+
   def decode(bytes: Array[Byte]): Set[TopicPartition] = Json.parseBytes(bytes).map { js =>
     val partitionsJson = js.asJsonObject("partitions").asJsonArray
     partitionsJson.iterator.map { partitionsJson =>
@@ -524,13 +550,15 @@ object ConsumerPathZNode {
 
 object ConsumerOffset {
   def path(group: String, topic: String, partition: Integer) = s"${ConsumerPathZNode.path}/${group}/offsets/${topic}/${partition}"
+
   def encode(offset: Long): Array[Byte] = offset.toString.getBytes(UTF_8)
+
   def decode(bytes: Array[Byte]): Option[Long] = Option(bytes).map(new String(_, UTF_8).toLong)
 }
 
 object ZkVersion {
   val MatchAnyVersion = -1 // if used in a conditional set, matches any version (the value should match ZooKeeper codebase)
-  val UnknownVersion = -2  // Version returned from get if node does not exist (internal constant for Kafka codebase, unused value in ZK)
+  val UnknownVersion = -2 // Version returned from get if node does not exist (internal constant for Kafka codebase, unused value in ZK)
 }
 
 object ZkStat {
@@ -539,39 +567,40 @@ object ZkStat {
 
 object StateChangeHandlers {
   val ControllerHandler = "controller-state-change-handler"
+
   def zkNodeChangeListenerHandler(seqNodeRoot: String) = s"change-notification-$seqNodeRoot"
 }
 
 /**
-  * Acls for resources are stored in ZK under two root paths:
-  * <ul>
-  *   <li>[[org.apache.kafka.common.resource.PatternType#LITERAL Literal]] patterns are stored under '/kafka-acl'.
-  *   The format is JSON. See [[kafka.zk.ResourceZNode]] for details.</li>
-  *   <li>All other patterns are stored under '/kafka-acl-extended/<i>pattern-type</i>'.
-  *   The format is JSON. See [[kafka.zk.ResourceZNode]] for details.</li>
-  * </ul>
-  *
-  * Under each root node there will be one child node per resource type (Topic, Cluster, Group, etc).
-  * Under each resourceType there will be a unique child for each resource pattern and the data for that child will contain
-  * list of its acls as a json object. Following gives an example:
-  *
-  * <pre>
-  * // Literal patterns:
-  * /kafka-acl/Topic/topic-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-  * /kafka-acl/Cluster/kafka-cluster => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-  *
-  * // Prefixed patterns:
-  * /kafka-acl-extended/PREFIXED/Group/group-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
-  * </pre>
-  *
-  * Acl change events are also stored under two paths:
-  * <ul>
-  *   <li>[[org.apache.kafka.common.resource.PatternType#LITERAL Literal]] patterns are stored under '/kafka-acl-changes'.
-  *   The format is a UTF8 string in the form: &lt;resource-type&gt;:&lt;resource-name&gt;</li>
-  *   <li>All other patterns are stored under '/kafka-acl-extended-changes'
-  *   The format is JSON, as defined by [[kafka.zk.ExtendedAclChangeEvent]]</li>
-  * </ul>
-  */
+ * Acls for resources are stored in ZK under two root paths:
+ * <ul>
+ * <li>[[org.apache.kafka.common.resource.PatternType#LITERAL Literal]] patterns are stored under '/kafka-acl'.
+ * The format is JSON. See [[kafka.zk.ResourceZNode]] for details.</li>
+ * <li>All other patterns are stored under '/kafka-acl-extended/<i>pattern-type</i>'.
+ * The format is JSON. See [[kafka.zk.ResourceZNode]] for details.</li>
+ * </ul>
+ *
+ * Under each root node there will be one child node per resource type (Topic, Cluster, Group, etc).
+ * Under each resourceType there will be a unique child for each resource pattern and the data for that child will contain
+ * list of its acls as a json object. Following gives an example:
+ *
+ * <pre>
+ * // Literal patterns:
+ * /kafka-acl/Topic/topic-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+ * /kafka-acl/Cluster/kafka-cluster => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+ *
+ * // Prefixed patterns:
+ * /kafka-acl-extended/PREFIXED/Group/group-1 => {"version": 1, "acls": [ { "host":"host1", "permissionType": "Allow","operation": "Read","principal": "User:alice"}]}
+ * </pre>
+ *
+ * Acl change events are also stored under two paths:
+ * <ul>
+ * <li>[[org.apache.kafka.common.resource.PatternType#LITERAL Literal]] patterns are stored under '/kafka-acl-changes'.
+ * The format is a UTF8 string in the form: &lt;resource-type&gt;:&lt;resource-name&gt;</li>
+ * <li>All other patterns are stored under '/kafka-acl-extended-changes'
+ * The format is JSON, as defined by [[kafka.zk.ExtendedAclChangeEvent]]</li>
+ * </ul>
+ */
 sealed trait ZkAclStore {
   val patternType: PatternType
   val aclPath: String
@@ -641,6 +670,7 @@ case class AclChangeNode(path: String, bytes: Array[Byte])
 
 sealed trait ZkAclChangeStore {
   val aclChangePath: String
+
   def createPath: String = s"$aclChangePath/${ZkAclChangeStore.SequenceNumberPrefix}"
 
   def decode(bytes: Array[Byte]): ResourcePattern
@@ -682,9 +712,9 @@ case object LiteralAclChangeStore extends ZkAclChangeStore {
   def decode(bytes: Array[Byte]): ResourcePattern = {
     val string = new String(bytes, UTF_8)
     string.split(AclEntry.ResourceSeparator, 2) match {
-        case Array(resourceType, resourceName, _*) => new ResourcePattern(ResourceType.fromString(resourceType), resourceName, PatternType.LITERAL)
-        case _ => throw new IllegalArgumentException("expected a string in format ResourceType:ResourceName but got " + string)
-      }
+      case Array(resourceType, resourceName, _*) => new ResourcePattern(ResourceType.fromString(resourceType), resourceName, PatternType.LITERAL)
+      case _ => throw new IllegalArgumentException("expected a string in format ResourceType:ResourceName but got " + string)
+    }
   }
 }
 
@@ -720,6 +750,7 @@ object ResourceZNode {
   def path(resource: ResourcePattern): String = ZkAclStore(resource.patternType).path(resource.resourceType, resource.name)
 
   def encode(acls: Set[AclEntry]): Array[Byte] = Json.encodeAsBytes(AclEntry.toJsonCompatibleMap(acls).asJava)
+
   def decode(bytes: Array[Byte], stat: Stat): VersionedAcls = VersionedAcls(AclEntry.fromBytes(bytes), stat.getVersion)
 }
 
@@ -754,7 +785,7 @@ object ClusterIdZNode {
     Json.encodeAsBytes(Map("version" -> "1", "id" -> id).asJava)
   }
 
-  def fromJson(clusterIdJson:  Array[Byte]): String = {
+  def fromJson(clusterIdJson: Array[Byte]): String = {
     Json.parseBytes(clusterIdJson).map(_.asJsonObject("id").to[String]).getOrElse {
       throw new KafkaException(s"Failed to parse the cluster id json $clusterIdJson")
     }
@@ -800,14 +831,18 @@ object DelegationTokenAuthZNode {
 }
 
 object DelegationTokenChangeNotificationZNode {
-  def path =  s"${DelegationTokenAuthZNode.path}/token_changes"
+  def path = s"${DelegationTokenAuthZNode.path}/token_changes"
 }
 
 object DelegationTokenChangeNotificationSequenceZNode {
   val SequenceNumberPrefix = "token_change_"
+
   def createPath = s"${DelegationTokenChangeNotificationZNode.path}/$SequenceNumberPrefix"
+
   def deletePath(sequenceNode: String) = s"${DelegationTokenChangeNotificationZNode.path}/${sequenceNode}"
-  def encode(tokenId : String): Array[Byte] = tokenId.getBytes(UTF_8)
+
+  def encode(tokenId: String): Array[Byte] = tokenId.getBytes(UTF_8)
+
   def decode(bytes: Array[Byte]): String = new String(bytes, UTF_8)
 }
 
@@ -816,8 +851,10 @@ object DelegationTokensZNode {
 }
 
 object DelegationTokenInfoZNode {
-  def path(tokenId: String) =  s"${DelegationTokensZNode.path}/$tokenId"
-  def encode(token: DelegationToken): Array[Byte] =  Json.encodeAsBytes(DelegationTokenManager.toJsonCompatibleMap(token).asJava)
+  def path(tokenId: String) = s"${DelegationTokensZNode.path}/$tokenId"
+
+  def encode(token: DelegationToken): Array[Byte] = Json.encodeAsBytes(DelegationTokenManager.toJsonCompatibleMap(token).asJava)
+
   def decode(bytes: Array[Byte]): Option[TokenInformation] = DelegationTokenManager.fromBytes(bytes)
 }
 
@@ -825,14 +862,14 @@ object DelegationTokenInfoZNode {
  * Represents the status of the FeatureZNode.
  *
  * Enabled  -> This status means the feature versioning system (KIP-584) is enabled, and, the
- *             finalized features stored in the FeatureZNode are active. This status is written by
- *             the controller to the FeatureZNode only when the broker IBP config is greater than
- *             or equal to KAFKA_2_7_IV0.
+ * finalized features stored in the FeatureZNode are active. This status is written by
+ * the controller to the FeatureZNode only when the broker IBP config is greater than
+ * or equal to KAFKA_2_7_IV0.
  *
  * Disabled -> This status means the feature versioning system (KIP-584) is disabled, and, the
- *             the finalized features stored in the FeatureZNode is not relevant. This status is
- *             written by the controller to the FeatureZNode only when the broker IBP config
- *             is less than KAFKA_2_7_IV0.
+ * the finalized features stored in the FeatureZNode is not relevant. This status is
+ * written by the controller to the FeatureZNode only when the broker IBP config
+ * is less than KAFKA_2_7_IV0.
  */
 sealed trait FeatureZNodeStatus {
   def id: Int
@@ -859,8 +896,8 @@ object FeatureZNodeStatus {
 /**
  * Represents the contents of the ZK node containing finalized feature information.
  *
- * @param status     the status of the ZK node
- * @param features   the cluster-wide finalized features
+ * @param status   the status of the ZK node
+ * @param features the cluster-wide finalized features
  */
 case class FeatureZNode(status: FeatureZNodeStatus, features: Features[FinalizedVersionRange]) {
 }
@@ -879,8 +916,8 @@ object FeatureZNode {
   def asJavaMap(scalaMap: Map[String, Map[String, Short]]): util.Map[String, util.Map[String, java.lang.Short]] = {
     scalaMap
       .map {
-        case(featureName, versionInfo) => featureName -> versionInfo.map {
-          case(label, version) => label -> java.lang.Short.valueOf(version)
+        case (featureName, versionInfo) => featureName -> versionInfo.map {
+          case (label, version) => label -> java.lang.Short.valueOf(version)
         }.asJava
       }.asJava
   }
@@ -888,9 +925,8 @@ object FeatureZNode {
   /**
    * Encodes a FeatureZNode to JSON.
    *
-   * @param featureZNode   FeatureZNode to be encoded
-   *
-   * @return               JSON representation of the FeatureZNode, as an Array[Byte]
+   * @param featureZNode FeatureZNode to be encoded
+   * @return JSON representation of the FeatureZNode, as an Array[Byte]
    */
   def encode(featureZNode: FeatureZNode): Array[Byte] = {
     val jsonMap = collection.mutable.Map(
@@ -903,11 +939,9 @@ object FeatureZNode {
   /**
    * Decodes the contents of the feature ZK node from Array[Byte] to a FeatureZNode.
    *
-   * @param jsonBytes   the contents of the feature ZK node
-   *
-   * @return            the FeatureZNode created from jsonBytes
-   *
-   * @throws IllegalArgumentException   if the Array[Byte] can not be decoded.
+   * @param jsonBytes the contents of the feature ZK node
+   * @return the FeatureZNode created from jsonBytes
+   * @throws IllegalArgumentException if the Array[Byte] can not be decoded.
    */
   def decode(jsonBytes: Array[Byte]): FeatureZNode = {
     Json.tryParseBytes(jsonBytes) match {
@@ -980,15 +1014,29 @@ object ZkData {
 
   // These are persistent ZK paths that should exist on kafka broker startup.
   val PersistentZkPaths = Seq(
+    // 1 消费者目录 /consumers
     ConsumerPathZNode.path, // old consumer path
+    // 2 broker 目录 /brokers/ids
     BrokerIdsZNode.path,
+    // 3 topic 目录 /brokers/topics
     TopicsZNode.path,
+    // 4 配置变更通知目录 /config/changes
     ConfigEntityChangeNotificationZNode.path,
+    // 5 删除主题目录 /admin/delete_topics
     DeleteTopicsZNode.path,
+    // 6 broker 序列 id 目录 /brokers/seqid
     BrokerSequenceIdZNode.path,
+    // 7 isr 变更通知目录 /isr_change_notification
     IsrChangeNotificationZNode.path,
+    // 8 生产者 id block 目录 /latest_producer_id_block
     ProducerIdBlockZNode.path,
+    // 9 log dir event 通知目录 /log_dir_event_notification
     LogDirEventNotificationZNode.path
+    // 10 /config/topics
+    // 11 /config/clients
+    // 12 /config/users
+    // 13 /config/brokers
+    // 14 /config/ips
   ) ++ ConfigType.all.map(ConfigEntityTypeZNode.path)
 
   val SensitiveRootPaths = Seq(

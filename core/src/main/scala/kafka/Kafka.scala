@@ -66,6 +66,7 @@ object Kafka extends Logging {
   private def buildServer(props: Properties): Server = {
     val config = KafkaConfig.fromProps(props, false)
     if (config.requiresZookeeper) {
+      // 创建 KafkaServer
       new KafkaServer(
         config,
         Time.SYSTEM,
@@ -83,7 +84,10 @@ object Kafka extends Logging {
 
   def main(args: Array[String]): Unit = {
     try {
+      // 1 解析参数并加载 server.properties 文件
       val serverProps = getPropsFromArgs(args)
+
+      // 2 构建 KafkaServer
       val server = buildServer(serverProps)
 
       try {
@@ -106,6 +110,7 @@ object Kafka extends Logging {
         }
       })
 
+      // 3 启动 KafkaServer
       try server.startup()
       catch {
         case _: Throwable =>
@@ -114,6 +119,7 @@ object Kafka extends Logging {
           Exit.exit(1)
       }
 
+      // 4 阻塞等待 KafkaServer 运行完成
       server.awaitShutdown()
     }
     catch {

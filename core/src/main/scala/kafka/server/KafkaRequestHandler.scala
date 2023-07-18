@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -41,6 +41,7 @@ class KafkaRequestHandler(id: Int,
                           brokerId: Int,
                           val aggregateIdleMeter: Meter,
                           val totalHandlerThreads: AtomicInteger,
+                          // SocketServer 的 RequestChannel
                           val requestChannel: RequestChannel,
                           apis: ApiRequestHandler,
                           time: Time) extends Runnable with Logging {
@@ -57,6 +58,7 @@ class KafkaRequestHandler(id: Int,
       // time should be discounted by # threads.
       val startSelectTime = time.nanoseconds
 
+      // 1 从 RequestChannel 获取一个 Request 请求
       val req = requestChannel.receiveRequest(300)
       val endTime = time.nanoseconds
       val idleTime = endTime - startSelectTime
@@ -72,6 +74,9 @@ class KafkaRequestHandler(id: Int,
           try {
             request.requestDequeueTimeNanos = endTime
             trace(s"Kafka request handler $id on broker $brokerId handling request $request")
+            // 2 处理 Request 请求
+            // Producer、Consumer、etc -> KafkaApis.handle()
+            // Broker Controller -> ControllerApis.handle()
             apis.handle(request, requestLocal)
           } catch {
             case e: FatalExitError =>
@@ -104,25 +109,33 @@ class KafkaRequestHandler(id: Int,
 }
 
 class KafkaRequestHandlerPool(val brokerId: Int,
+                              // SocketServer 的 RequestChannel
                               val requestChannel: RequestChannel,
+                              // KafkaApis
                               val apis: ApiRequestHandler,
                               time: Time,
+                              // 默认 8
                               numThreads: Int,
                               requestHandlerAvgIdleMetricName: String,
-                              logAndThreadNamePrefix : String) extends Logging with KafkaMetricsGroup {
+                              logAndThreadNamePrefix: String) extends Logging with KafkaMetricsGroup {
 
   private val threadPoolSize: AtomicInteger = new AtomicInteger(numThreads)
   /* a meter to track the average free capacity of the request handlers */
   private val aggregateIdleMeter = newMeter(requestHandlerAvgIdleMetricName, "percent", TimeUnit.NANOSECONDS)
 
   this.logIdent = "[" + logAndThreadNamePrefix + " Kafka Request Handler on Broker " + brokerId + "], "
+
+  // 缓存线程
   val runnables = new mutable.ArrayBuffer[KafkaRequestHandler](numThreads)
+  // 创建并启动 KafkaRequestHandler 线程
   for (i <- 0 until numThreads) {
     createHandler(i)
   }
 
   def createHandler(id: Int): Unit = synchronized {
+    // 创建 KafkaRequestHandler 线程
     runnables += new KafkaRequestHandler(id, brokerId, aggregateIdleMeter, threadPoolSize, requestChannel, apis, time)
+    // 启动 KafkaRequestHandler 线程
     KafkaThread.daemon(logAndThreadNamePrefix + "-kafka-request-handler-" + id, runnables(id)).start()
   }
 
@@ -293,6 +306,7 @@ object BrokerTopicStats {
 }
 
 class BrokerTopicStats extends Logging {
+
   import BrokerTopicStats._
 
   private val stats = new Pool[String, BrokerTopicMetrics](Some(valueFactory))
