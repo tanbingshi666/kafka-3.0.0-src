@@ -37,6 +37,7 @@ object ControllerEventManager {
 
 trait ControllerEventProcessor {
   def process(event: ControllerEvent): Unit
+
   def preempt(event: ControllerEvent): Unit
 }
 
@@ -68,16 +69,20 @@ class QueuedEvent(val event: ControllerEvent,
 }
 
 class ControllerEventManager(controllerId: Int,
+                             // 1 KafkaController
                              processor: ControllerEventProcessor,
                              time: Time,
                              rateAndTimeMetrics: Map[ControllerState, KafkaTimer],
                              eventQueueTimeTimeoutMs: Long = 300000) extends KafkaMetricsGroup {
+
   import ControllerEventManager._
 
   @volatile private var _state: ControllerState = ControllerState.Idle
   private val putLock = new ReentrantLock()
+  // 2 事件缓存阻塞队列 LinkedBlockingQueue
   private val queue = new LinkedBlockingQueue[QueuedEvent]
   // Visible for test
+  // 3 拉取事件线程 ControllerEventThread
   private[controller] var thread = new ControllerEventThread(ControllerEventThreadName)
 
   private val eventQueueTimeHist = newHistogram(EventQueueTimeMetricName)
@@ -100,12 +105,14 @@ class ControllerEventManager(controllerId: Int,
   }
 
   def put(event: ControllerEvent): QueuedEvent = inLock(putLock) {
+    // 1 封装 ControllerEvent 为 QueuedEvent
     val queuedEvent = new QueuedEvent(event, time.milliseconds())
+    // 2 将事件添加到事件管理者的内部阻塞队列
     queue.put(queuedEvent)
     queuedEvent
   }
 
-  def clearAndPut(event: ControllerEvent): QueuedEvent = inLock(putLock){
+  def clearAndPut(event: ControllerEvent): QueuedEvent = inLock(putLock) {
     val preemptedEvents = new ArrayList[QueuedEvent]()
     queue.drainTo(preemptedEvents)
     preemptedEvents.forEach(_.preempt(processor))
@@ -130,7 +137,9 @@ class ControllerEventManager(controllerId: Int,
             def process(): Unit = dequeued.process(processor)
 
             rateAndTimeMetrics.get(state) match {
-              case Some(timer) => timer.time { process() }
+              case Some(timer) => timer.time {
+                process()
+              }
               case None => process()
             }
           } catch {
@@ -145,7 +154,7 @@ class ControllerEventManager(controllerId: Int,
   private def pollFromEventQueue(): QueuedEvent = {
     val count = eventQueueTimeHist.count()
     if (count != 0) {
-      val event  = queue.poll(eventQueueTimeTimeoutMs, TimeUnit.MILLISECONDS)
+      val event = queue.poll(eventQueueTimeTimeoutMs, TimeUnit.MILLISECONDS)
       if (event == null) {
         eventQueueTimeHist.clear()
         queue.take()

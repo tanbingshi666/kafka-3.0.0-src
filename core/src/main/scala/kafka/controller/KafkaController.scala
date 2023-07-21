@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -53,8 +53,11 @@ import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
 sealed trait ElectionTrigger
+
 final case object AutoTriggered extends ElectionTrigger
+
 final case object ZkTriggered extends ElectionTrigger
+
 final case object AdminClientTriggered extends ElectionTrigger
 
 object KafkaController extends Logging {
@@ -78,37 +81,53 @@ class KafkaController(val config: KafkaConfig,
                       brokerFeatures: BrokerFeatures,
                       featureCache: FinalizedFeatureCache,
                       threadNamePrefix: Option[String] = None)
+// 1 基础 ControllerEventProcessor
   extends ControllerEventProcessor with Logging with KafkaMetricsGroup {
 
   this.logIdent = s"[Controller id=${config.brokerId}] "
 
+  // 2 broker 信息
   @volatile private var brokerInfo = initialBrokerInfo
   @volatile private var _brokerEpoch = initialBrokerEpoch
 
   private val isAlterIsrEnabled = config.interBrokerProtocolVersion.isAlterIsrSupported
   private val stateChangeLogger = new StateChangeLogger(config.brokerId, inControllerContext = true, None)
+
+  // 3 创建 kafka broker controller 上下文 ControllerContext
   val controllerContext = new ControllerContext
+
+  // 4 创建 ControllerChannelManager
   var controllerChannelManager = new ControllerChannelManager(controllerContext, config, time, metrics,
     stateChangeLogger, threadNamePrefix)
 
   // have a separate scheduler for the controller to be able to start and stop independently of the kafka server
   // visible for testing
+  // 5 创建调度器 KafkaScheduler
   private[controller] val kafkaScheduler = new KafkaScheduler(1)
 
   // visible for testing
+  // 6 创建 Controller 事件管理器 ControllerEventManager
+  // 里面有一个事件阻塞队列和一个拉取事件线程
   private[controller] val eventManager = new ControllerEventManager(config.brokerId, this, time,
     controllerContext.stats.rateAndTimeMetrics)
 
+  // 7 创建 ControllerBrokerRequestBatch
   private val brokerRequestBatch = new ControllerBrokerRequestBatch(config, controllerChannelManager,
     eventManager, controllerContext, stateChangeLogger)
+  // 8 创建副本状态机 ZkReplicaStateMachine
   val replicaStateMachine: ReplicaStateMachine = new ZkReplicaStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
+  // 9 创建分区状态机 ZkPartitionStateMachine
   val partitionStateMachine: PartitionStateMachine = new ZkPartitionStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
+  // 10 创建主题删除管理者 TopicDeletionManager
   val topicDeletionManager = new TopicDeletionManager(config, controllerContext, replicaStateMachine,
     partitionStateMachine, new ControllerDeletionClient(this, zkClient))
 
+  // 11 创建一堆 Event Handler
+  // 11.1 处理 Controller 变化事件
   private val controllerChangeHandler = new ControllerChangeHandler(eventManager)
+  // 11.2 处理 Broker 变化事件
   private val brokerChangeHandler = new BrokerChangeHandler(eventManager)
   private val brokerModificationsHandlers: mutable.Map[Int, BrokerModificationsHandler] = mutable.Map.empty
   private val topicChangeHandler = new TopicChangeHandler(eventManager)
@@ -158,11 +177,18 @@ class KafkaController(val config: KafkaConfig,
    * elector
    */
   def startup() = {
+    // 1 连接 zk
     zkClient.registerStateChangeHandler(new StateChangeHandler {
       override val name: String = StateChangeHandlers.ControllerHandler
+
+      // 1.2 连接 zk 成功之后
       override def afterInitializingSession(): Unit = {
+        // 连接 zk 成功后往事件管理者的阻塞队列添加事件 RegisterBrokerAndReelect
+        // 最终调用 KafkaController.process(RegisterBrokerAndReelect) 完成注册和 Controller 选举
         eventManager.put(RegisterBrokerAndReelect)
       }
+
+      // 1.1 连接 zk 成功之前
       override def beforeInitializingSession(): Unit = {
         val queuedEvent = eventManager.clearAndPut(Expire)
 
@@ -171,7 +197,10 @@ class KafkaController(val config: KafkaConfig,
         queuedEvent.awaitProcessing()
       }
     })
+    // 2 添加启动事件 Startup 到事件管理者的阻塞队列 LinkedBlockingQueue
+    // 最终调用 KafkaController.process(Startup)
     eventManager.put(Startup)
+    // 3 启动事件管理者内部线程 ControllerEventThread
     eventManager.start()
   }
 
@@ -190,7 +219,7 @@ class KafkaController(val config: KafkaConfig,
    * shutting down broker leads, and moves leadership of those partitions to another broker
    * that is in that partition's ISR.
    *
-   * @param id Id of the broker to shutdown.
+   * @param id          Id of the broker to shutdown.
    * @param brokerEpoch The broker epoch in the controlled shutdown request
    * @return The number of partitions that the broker still leads.
    */
@@ -220,7 +249,7 @@ class KafkaController(val config: KafkaConfig,
    * This callback is invoked by the zookeeper leader elector on electing the current broker as the new controller.
    * It does the following things on the become-controller state change -
    * 1. Initializes the controller's context object that holds cache objects for current topics, live brokers and
-   *    leaders for all existing partitions.
+   * leaders for all existing partitions.
    * 2. Starts the controller's channel manager
    * 3. Starts the replica state machine
    * 4. Starts the partition state machine
@@ -326,23 +355,23 @@ class KafkaController(val config: KafkaConfig,
    * There are multiple cases handled here:
    *
    * 1. New cluster bootstrap:
-   *    A new Kafka cluster (i.e. it is deployed first time) is almost always started with IBP config
-   *    setting greater than or equal to KAFKA_2_7_IV0. We would like to start the cluster with all
-   *    the possible supported features finalized immediately. Assuming this is the case, the
-   *    controller will start up and notice that the FeatureZNode is absent in the new cluster,
-   *    it will then create a FeatureZNode (with enabled status) containing the entire list of
-   *    supported features as its finalized features.
+   * A new Kafka cluster (i.e. it is deployed first time) is almost always started with IBP config
+   * setting greater than or equal to KAFKA_2_7_IV0. We would like to start the cluster with all
+   * the possible supported features finalized immediately. Assuming this is the case, the
+   * controller will start up and notice that the FeatureZNode is absent in the new cluster,
+   * it will then create a FeatureZNode (with enabled status) containing the entire list of
+   * supported features as its finalized features.
    *
    * 2. Broker binary upgraded, but IBP config set to lower than KAFKA_2_7_IV0:
-   *    Imagine there was an existing Kafka cluster with IBP config less than KAFKA_2_7_IV0, and the
-   *    broker binary has now been upgraded to a newer version that supports the feature versioning
-   *    system (KIP-584). But the IBP config is still set to lower than KAFKA_2_7_IV0, and may be
-   *    set to a higher value later. In this case, we want to start with no finalized features and
-   *    allow the user to finalize them whenever they are ready i.e. in the future whenever the
-   *    user sets IBP config to be greater than or equal to KAFKA_2_7_IV0, then the user could start
-   *    finalizing the features. This process ensures we do not enable all the possible features
-   *    immediately after an upgrade, which could be harmful to Kafka.
-   *    This is how we handle such a case:
+   * Imagine there was an existing Kafka cluster with IBP config less than KAFKA_2_7_IV0, and the
+   * broker binary has now been upgraded to a newer version that supports the feature versioning
+   * system (KIP-584). But the IBP config is still set to lower than KAFKA_2_7_IV0, and may be
+   * set to a higher value later. In this case, we want to start with no finalized features and
+   * allow the user to finalize them whenever they are ready i.e. in the future whenever the
+   * user sets IBP config to be greater than or equal to KAFKA_2_7_IV0, then the user could start
+   * finalizing the features. This process ensures we do not enable all the possible features
+   * immediately after an upgrade, which could be harmful to Kafka.
+   * This is how we handle such a case:
    *      - Before the IBP config upgrade (i.e. IBP config set to less than KAFKA_2_7_IV0), the
    *        controller will start up and check if the FeatureZNode is absent.
    *        - If the node is absent, it will react by creating a FeatureZNode with disabled status
@@ -359,24 +388,24 @@ class KafkaController(val config: KafkaConfig,
    *           the node umodified.
    *
    * 3. Broker binary upgraded, with existing cluster IBP config >= KAFKA_2_7_IV0:
-   *    Imagine there was an existing Kafka cluster with IBP config >= KAFKA_2_7_IV0, and the broker
-   *    binary has just been upgraded to a newer version (that supports IBP config KAFKA_2_7_IV0 and
-   *    higher). The controller will start up and find that a FeatureZNode is already present with
-   *    enabled status and existing finalized features. In such a case, the controller leaves the node
-   *    unmodified.
+   * Imagine there was an existing Kafka cluster with IBP config >= KAFKA_2_7_IV0, and the broker
+   * binary has just been upgraded to a newer version (that supports IBP config KAFKA_2_7_IV0 and
+   * higher). The controller will start up and find that a FeatureZNode is already present with
+   * enabled status and existing finalized features. In such a case, the controller leaves the node
+   * unmodified.
    *
    * 4. Broker downgrade:
-   *    Imagine that a Kafka cluster exists already and the IBP config is greater than or equal to
-   *    KAFKA_2_7_IV0. Then, the user decided to downgrade the cluster by setting IBP config to a
-   *    value less than KAFKA_2_7_IV0. This means the user is also disabling the feature versioning
-   *    system (KIP-584). In this case, when the controller starts up with the lower IBP config, it
-   *    will switch the FeatureZNode status to disabled with empty features.
+   * Imagine that a Kafka cluster exists already and the IBP config is greater than or equal to
+   * KAFKA_2_7_IV0. Then, the user decided to downgrade the cluster by setting IBP config to a
+   * value less than KAFKA_2_7_IV0. This means the user is also disabling the feature versioning
+   * system (KIP-584). In this case, when the controller starts up with the lower IBP config, it
+   * will switch the FeatureZNode status to disabled with empty features.
    */
   private def enableFeatureVersioning(): Unit = {
     val (mayBeFeatureZNodeBytes, version) = zkClient.getDataAndVersion(FeatureZNode.path)
     if (version == ZkVersion.UnknownVersion) {
       val newVersion = createFeatureZNode(new FeatureZNode(FeatureZNodeStatus.Enabled,
-                                          brokerFeatures.defaultFinalizedFeatures))
+        brokerFeatures.defaultFinalizedFeatures))
       featureCache.waitUntilEpochOrThrow(newVersion, config.zkConnectionTimeoutMs)
     } else {
       val existingFeatureZNode = FeatureZNode.decode(mayBeFeatureZNodeBytes.get)
@@ -385,7 +414,7 @@ class KafkaController(val config: KafkaConfig,
         case FeatureZNodeStatus.Disabled =>
           if (!existingFeatureZNode.features.empty()) {
             warn(s"FeatureZNode at path: ${FeatureZNode.path} with disabled status" +
-                 s" contains non-empty features: ${existingFeatureZNode.features}")
+              s" contains non-empty features: ${existingFeatureZNode.features}")
           }
           Features.emptyFinalizedFeatures
       }
@@ -407,10 +436,10 @@ class KafkaController(val config: KafkaConfig,
    *
    * NOTE:
    * 1. When this method returns, existing finalized features (if any) will be cleared from the
-   *    FeatureZNode.
+   * FeatureZNode.
    * 2. This method, unlike enableFeatureVersioning() need not wait for the FinalizedFeatureCache
-   *    to be updated, because, such updates to the cache (via FinalizedFeatureChangeListener)
-   *    are disabled when IBP config is < than KAFKA_2_7_IV0.
+   * to be updated, because, such updates to the cache (via FinalizedFeatureChangeListener)
+   * are disabled when IBP config is < than KAFKA_2_7_IV0.
    */
   private def disableFeatureVersioning(): Unit = {
     val newNode = FeatureZNode(FeatureZNodeStatus.Disabled, Features.emptyFinalizedFeatures())
@@ -420,9 +449,9 @@ class KafkaController(val config: KafkaConfig,
     } else {
       val existingFeatureZNode = FeatureZNode.decode(mayBeFeatureZNodeBytes.get)
       if (existingFeatureZNode.status == FeatureZNodeStatus.Disabled &&
-          !existingFeatureZNode.features.empty()) {
+        !existingFeatureZNode.features.empty()) {
         warn(s"FeatureZNode at path: ${FeatureZNode.path} with disabled status" +
-             s" contains non-empty features: ${existingFeatureZNode.features}")
+          s" contains non-empty features: ${existingFeatureZNode.features}")
       }
       if (!newNode.equals(existingFeatureZNode)) {
         updateFeatureZNode(newNode)
@@ -507,13 +536,13 @@ class KafkaController(val config: KafkaConfig,
    * 1. Sends update metadata request to all live and shutting down brokers
    * 2. Triggers the OnlinePartition state change for all new/offline partitions
    * 3. It checks whether there are reassigned replicas assigned to any newly started brokers. If
-   *    so, it performs the reassignment logic for each topic/partition.
+   * so, it performs the reassignment logic for each topic/partition.
    *
    * Note that we don't need to refresh the leader/isr cache for all topic/partitions at this point for two reasons:
    * 1. The partition state machine, when triggering online state change, will refresh leader and ISR for only those
-   *    partitions currently new or offline (rather than every partition this controller is aware of)
+   * partitions currently new or offline (rather than every partition this controller is aware of)
    * 2. Even if we do refresh the cache, there is no guarantee that by the time the leader and ISR request reaches
-   *    every broker that it is still valid.  Brokers check the leader epoch to determine validity of the request.
+   * every broker that it is still valid.  Brokers check the leader epoch to determine validity of the request.
    */
   private def onBrokerStartup(newBrokers: Seq[Int]): Unit = {
     info(s"New broker startup callback for ${newBrokers.mkString(",")}")
@@ -597,16 +626,16 @@ class KafkaController(val config: KafkaConfig,
   }
 
   /**
-    * This method marks the given replicas as offline. It does the following -
-    * 1. Marks the given partitions as offline
-    * 2. Triggers the OnlinePartition state change for all new/offline partitions
-    * 3. Invokes the OfflineReplica state change on the input list of newly offline replicas
-    * 4. If no partitions are affected then send UpdateMetadataRequest to live or shutting down brokers
-    *
-    * Note that we don't need to refresh the leader/isr cache for all topic/partitions at this point. This is because
-    * the partition state machine will refresh our cache for us when performing leader election for all new/offline
-    * partitions coming online.
-    */
+   * This method marks the given replicas as offline. It does the following -
+   * 1. Marks the given partitions as offline
+   * 2. Triggers the OnlinePartition state change for all new/offline partitions
+   * 3. Invokes the OfflineReplica state change on the input list of newly offline replicas
+   * 4. If no partitions are affected then send UpdateMetadataRequest to live or shutting down brokers
+   *
+   * Note that we don't need to refresh the leader/isr cache for all topic/partitions at this point. This is because
+   * the partition state machine will refresh our cache for us when performing leader election for all new/offline
+   * partitions coming online.
+   */
   private def onReplicasBecomeOffline(newOfflineReplicas: Set[PartitionAndReplica]): Unit = {
     val (newOfflineReplicasForDeletion, newOfflineReplicasNotForDeletion) =
       newOfflineReplicas.partition(p => topicDeletionManager.isTopicQueuedUpForDeletion(p.topic))
@@ -669,40 +698,40 @@ class KafkaController(val config: KafkaConfig,
    * RR = The replicas we are removing as part of this reassignment
    *
    * A reassignment may have up to three phases, each with its own steps:
-
+   *
    * Phase U (Assignment update): Regardless of the trigger, the first step is in the reassignment process
    * is to update the existing assignment state. We always update the state in Zookeeper before
    * we update memory so that it can be resumed upon controller fail-over.
    *
-   *   U1. Update ZK with RS = ORS + TRS, AR = TRS - ORS, RR = ORS - TRS.
-   *   U2. Update memory with RS = ORS + TRS, AR = TRS - ORS and RR = ORS - TRS
-   *   U3. If we are cancelling or replacing an existing reassignment, send StopReplica to all members
-   *       of AR in the original reassignment if they are not in TRS from the new assignment
+   * U1. Update ZK with RS = ORS + TRS, AR = TRS - ORS, RR = ORS - TRS.
+   * U2. Update memory with RS = ORS + TRS, AR = TRS - ORS and RR = ORS - TRS
+   * U3. If we are cancelling or replacing an existing reassignment, send StopReplica to all members
+   * of AR in the original reassignment if they are not in TRS from the new assignment
    *
    * To complete the reassignment, we need to bring the new replicas into sync, so depending on the state
    * of the ISR, we will execute one of the following steps.
    *
    * Phase A (when TRS != ISR): The reassignment is not yet complete
    *
-   *   A1. Bump the leader epoch for the partition and send LeaderAndIsr updates to RS.
-   *   A2. Start new replicas AR by moving replicas in AR to NewReplica state.
+   * A1. Bump the leader epoch for the partition and send LeaderAndIsr updates to RS.
+   * A2. Start new replicas AR by moving replicas in AR to NewReplica state.
    *
    * Phase B (when TRS = ISR): The reassignment is complete
    *
-   *   B1. Move all replicas in AR to OnlineReplica state.
-   *   B2. Set RS = TRS, AR = [], RR = [] in memory.
-   *   B3. Send a LeaderAndIsr request with RS = TRS. This will prevent the leader from adding any replica in TRS - ORS back in the isr.
-   *       If the current leader is not in TRS or isn't alive, we move the leader to a new replica in TRS.
-   *       We may send the LeaderAndIsr to more than the TRS replicas due to the
-   *       way the partition state machine works (it reads replicas from ZK)
-   *   B4. Move all replicas in RR to OfflineReplica state. As part of OfflineReplica state change, we shrink the
-   *       isr to remove RR in ZooKeeper and send a LeaderAndIsr ONLY to the Leader to notify it of the shrunk isr.
-   *       After that, we send a StopReplica (delete = false) to the replicas in RR.
-   *   B5. Move all replicas in RR to NonExistentReplica state. This will send a StopReplica (delete = true) to
-   *       the replicas in RR to physically delete the replicas on disk.
-   *   B6. Update ZK with RS=TRS, AR=[], RR=[].
-   *   B7. Remove the ISR reassign listener and maybe update the /admin/reassign_partitions path in ZK to remove this partition from it if present.
-   *   B8. After electing leader, the replicas and isr information changes. So resend the update metadata request to every broker.
+   * B1. Move all replicas in AR to OnlineReplica state.
+   * B2. Set RS = TRS, AR = [], RR = [] in memory.
+   * B3. Send a LeaderAndIsr request with RS = TRS. This will prevent the leader from adding any replica in TRS - ORS back in the isr.
+   * If the current leader is not in TRS or isn't alive, we move the leader to a new replica in TRS.
+   * We may send the LeaderAndIsr to more than the TRS replicas due to the
+   * way the partition state machine works (it reads replicas from ZK)
+   * B4. Move all replicas in RR to OfflineReplica state. As part of OfflineReplica state change, we shrink the
+   * isr to remove RR in ZooKeeper and send a LeaderAndIsr ONLY to the Leader to notify it of the shrunk isr.
+   * After that, we send a StopReplica (delete = false) to the replicas in RR.
+   * B5. Move all replicas in RR to NonExistentReplica state. This will send a StopReplica (delete = true) to
+   * the replicas in RR to physically delete the replicas on disk.
+   * B6. Update ZK with RS=TRS, AR=[], RR=[].
+   * B7. Remove the ISR reassign listener and maybe update the /admin/reassign_partitions path in ZK to remove this partition from it if present.
+   * B8. After electing leader, the replicas and isr information changes. So resend the update metadata request to every broker.
    *
    * In general, there are two goals we want to aim for:
    * 1. Every replica present in the replica set of a LeaderAndIsrRequest gets the request sent to it
@@ -771,7 +800,7 @@ class KafkaController(val config: KafkaConfig,
    * is cancelled, there is no way to restore the original order.
    *
    * @param topicPartition The reassigning partition
-   * @param reassignment The new reassignment
+   * @param reassignment   The new reassignment
    */
   private def updateCurrentReassignment(topicPartition: TopicPartition, reassignment: ReplicaAssignment): Unit = {
     val currentAssignment = controllerContext.partitionFullReplicaAssignment(topicPartition)
@@ -844,18 +873,19 @@ class KafkaController(val config: KafkaConfig,
   }
 
   /**
-    * Attempt to elect a replica as leader for each of the given partitions.
-    * @param partitions The partitions to have a new leader elected
-    * @param electionType The type of election to perform
-    * @param electionTrigger The reason for tigger this election
-    * @return A map of failed and successful elections. The keys are the topic partitions and the corresponding values are
-    *         either the exception that was thrown or new leader & ISR.
-    */
+   * Attempt to elect a replica as leader for each of the given partitions.
+   *
+   * @param partitions      The partitions to have a new leader elected
+   * @param electionType    The type of election to perform
+   * @param electionTrigger The reason for tigger this election
+   * @return A map of failed and successful elections. The keys are the topic partitions and the corresponding values are
+   *         either the exception that was thrown or new leader & ISR.
+   */
   private[this] def onReplicaElection(
-    partitions: Set[TopicPartition],
-    electionType: ElectionType,
-    electionTrigger: ElectionTrigger
-  ): Map[TopicPartition, Either[Throwable, LeaderAndIsr]] = {
+                                       partitions: Set[TopicPartition],
+                                       electionType: ElectionType,
+                                       electionTrigger: ElectionTrigger
+                                     ): Map[TopicPartition, Either[Throwable, LeaderAndIsr]] = {
     info(s"Starting replica leader election ($electionType) for partitions ${partitions.mkString(",")} triggered by $electionTrigger")
     try {
       val strategy = electionType match {
@@ -966,7 +996,8 @@ class KafkaController(val config: KafkaConfig,
     val topicsWithOfflineReplicas = controllerContext.allTopics.filter { topic => {
       val replicasForTopic = controllerContext.replicasForTopic(topic)
       replicasForTopic.exists(r => !controllerContext.isReplicaOnline(r.replica, r.topicPartition))
-    }}
+    }
+    }
     val topicsForWhichPartitionReassignmentIsInProgress = controllerContext.partitionsBeingReassigned.map(_.topic)
     val topicsIneligibleForDeletion = topicsWithOfflineReplicas | topicsForWhichPartitionReassignmentIsInProgress
     info(s"List of topics to be deleted: ${topicsToBeDeleted.mkString(",")}")
@@ -1152,7 +1183,7 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def removePartitionsFromPreferredReplicaElection(partitionsToBeRemoved: Set[TopicPartition],
-                                                           isTriggeredByAutoRebalance : Boolean): Unit = {
+                                                           isTriggeredByAutoRebalance: Boolean): Unit = {
     for (partition <- partitionsToBeRemoved) {
       // check the status
       val currentLeader = controllerContext.partitionLeadershipInfo(partition).get.leaderAndIsr.leader
@@ -1239,7 +1270,7 @@ class KafkaController(val config: KafkaConfig,
       controllerContext.allPartitions.filterNot {
         tp => topicDeletionManager.isTopicQueuedUpForDeletion(tp.topic)
       }.map { tp =>
-        (tp, controllerContext.partitionReplicaAssignment(tp) )
+        (tp, controllerContext.partitionReplicaAssignment(tp))
       }.toMap.groupBy { case (_, assignedReplicas) => assignedReplicas.head }
 
     // for each broker, check if a preferred replica election needs to be triggered
@@ -1260,10 +1291,10 @@ class KafkaController(val config: KafkaConfig,
         // and preferred replica election is not in progress
         val candidatePartitions = topicsNotInPreferredReplica.keys.filter(tp =>
           controllerContext.partitionsBeingReassigned.isEmpty &&
-          !topicDeletionManager.isTopicQueuedUpForDeletion(tp.topic) &&
-          controllerContext.allTopics.contains(tp.topic) &&
-          canPreferredReplicaBeLeader(tp)
-       )
+            !topicDeletionManager.isTopicQueuedUpForDeletion(tp.topic) &&
+            controllerContext.allTopics.contains(tp.topic) &&
+            canPreferredReplicaBeLeader(tp)
+        )
         onReplicaElection(candidatePartitions.toSet, ElectionType.PREFERRED, AutoTriggered)
       }
     }
@@ -1301,7 +1332,9 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processControlledShutdown(id: Int, brokerEpoch: Long, controlledShutdownCallback: Try[Set[TopicPartition]] => Unit): Unit = {
-    val controlledShutdownResult = Try { doControlledShutdown(id, brokerEpoch) }
+    val controlledShutdownResult = Try {
+      doControlledShutdown(id, brokerEpoch)
+    }
     controlledShutdownCallback(controlledShutdownResult)
   }
 
@@ -1378,7 +1411,7 @@ class KafkaController(val config: KafkaConfig,
     val offlineReplicas = new ArrayBuffer[TopicPartition]()
     val onlineReplicas = new ArrayBuffer[TopicPartition]()
 
-    leaderAndIsrResponse.partitionErrors(controllerContext.topicNames.asJava).forEach{ case (tp, error) =>
+    leaderAndIsrResponse.partitionErrors(controllerContext.topicNames.asJava).forEach { case (tp, error) =>
       if (error.code() == Errors.KAFKA_STORAGE_ERROR.code)
         offlineReplicas += tp
       else if (error.code() == Errors.NONE.code)
@@ -1419,7 +1452,9 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processStartup(): Unit = {
+    // 1 注册 Controller 变化事件处理器
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
+    // 2 broker controller 选举
     elect()
   }
 
@@ -1497,6 +1532,7 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def elect(): Unit = {
+    // 1 从 zk 获取 controller /controller 是否存在
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
     /*
      * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition,
@@ -1509,6 +1545,7 @@ class KafkaController(val config: KafkaConfig,
     }
 
     try {
+      // 2 尝试进行 controller 选举
       val (epoch, epochZkVersion) = zkClient.registerControllerAndIncrementControllerEpoch(config.brokerId)
       controllerContext.epoch = epoch
       controllerContext.epochZkVersion = epochZkVersion
@@ -1517,6 +1554,7 @@ class KafkaController(val config: KafkaConfig,
       info(s"${config.brokerId} successfully elected as the controller. Epoch incremented to ${controllerContext.epoch} " +
         s"and epoch zk version is now ${controllerContext.epochZkVersion}")
 
+      // 3 controller 选举成功回调
       onControllerFailover()
     } catch {
       case e: ControllerMovedException =>
@@ -1540,9 +1578,9 @@ class KafkaController(val config: KafkaConfig,
    *  - The second map contains only those brokers whose features were found to be incompatible with
    *    the existing finalized features.
    *
-   * @param brokersAndEpochs   the map to be partitioned
-   * @return                   two maps: first contains compatible brokers and second contains
-   *                           incompatible brokers as explained above
+   * @param brokersAndEpochs the map to be partitioned
+   * @return two maps: first contains compatible brokers and second contains
+   *         incompatible brokers as explained above
    */
   private def partitionOnFeatureCompatibility(brokersAndEpochs: Map[Broker, Long]): (Map[Broker, Long], Map[Broker, Long]) = {
     // There can not be any feature incompatibilities when the feature versioning system is disabled
@@ -1551,9 +1589,9 @@ class KafkaController(val config: KafkaConfig,
     brokersAndEpochs.partition {
       case (broker, _) =>
         !config.isFeatureVersioningSupported ||
-        !featureCache.get.exists(
-          latestFinalizedFeatures =>
-            BrokerFeatures.hasIncompatibleFeatures(broker.features, latestFinalizedFeatures.features))
+          !featureCache.get.exists(
+            latestFinalizedFeatures =>
+              BrokerFeatures.hasIncompatibleFeatures(broker.features, latestFinalizedFeatures.features))
     }
   }
 
@@ -1673,7 +1711,7 @@ class KafkaController(val config: KafkaConfig,
     updatedTopicIdAssignments.foreach { topicIdAssignment =>
       topicIdAssignment.topicId.foreach { topicId =>
         controllerContext.addTopicId(topicIdAssignment.topic, topicId)
-    }
+      }
     }
   }
 
@@ -1691,9 +1729,9 @@ class KafkaController(val config: KafkaConfig,
 
   private def processPartitionModifications(topic: String): Unit = {
     def restorePartitionReplicaAssignment(
-      topic: String,
-      newPartitionReplicaAssignment: Map[TopicPartition, ReplicaAssignment]
-    ): Unit = {
+                                           topic: String,
+                                           newPartitionReplicaAssignment: Map[TopicPartition, ReplicaAssignment]
+                                         ): Unit = {
       info("Restoring the partition replica assignment for topic %s".format(topic))
 
       val existingPartitions = zkClient.getChildren(TopicPartitionsZNode.path(topic))
@@ -1701,7 +1739,7 @@ class KafkaController(val config: KafkaConfig,
         .filter(p => existingPartitions.contains(p._1.partition.toString))
         .map { case (tp, _) =>
           tp -> controllerContext.partitionFullReplicaAssignment(tp)
-      }.toMap
+        }.toMap
 
       zkClient.setTopicAssignment(topic,
         controllerContext.topicIds.get(topic),
@@ -1799,7 +1837,7 @@ class KafkaController(val config: KafkaConfig,
    *
    * @param reassignments Map of reassignments passed through the AlterReassignments API. A null value
    *                      means that we should cancel an in-progress reassignment.
-   * @param callback Callback to send AlterReassignments response
+   * @param callback      Callback to send AlterReassignments response
    */
   private def processApiPartitionReassignment(reassignments: Map[TopicPartition, Option[Seq[Int]]],
                                               callback: AlterReassignmentsCallback): Unit = {
@@ -1835,13 +1873,13 @@ class KafkaController(val config: KafkaConfig,
     val replicaSet = replicas.toSet
     if (replicas.isEmpty)
       Some(new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
-          s"Empty replica list specified in partition reassignment."))
+        s"Empty replica list specified in partition reassignment."))
     else if (replicas.size != replicaSet.size) {
       Some(new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
-          s"Duplicate replica ids in partition reassignment replica list: $replicas"))
+        s"Duplicate replica ids in partition reassignment replica list: $replicas"))
     } else if (replicas.exists(_ < 0))
       Some(new ApiError(Errors.INVALID_REPLICA_ASSIGNMENT,
-          s"Invalid broker id in replica list: $replicas"))
+        s"Invalid broker id in replica list: $replicas"))
     else {
       // Ensure that any new replicas are among the live brokers
       val currentAssignment = controllerContext.partitionFullReplicaAssignment(topicPartition)
@@ -1912,9 +1950,8 @@ class KafkaController(val config: KafkaConfig,
    * incompatibilities seen with all known brokers for the provided feature update.
    * Otherwise returns an ApiError object containing Errors.INVALID_REQUEST.
    *
-   * @param update   the feature update to be processed (this can not be meant to delete the feature)
-   *
-   * @return         the new FinalizedVersionRange or error, as described above.
+   * @param update the feature update to be processed (this can not be meant to delete the feature)
+   * @return the new FinalizedVersionRange or error, as described above.
    */
   private def newFinalizedVersionRangeOrIncompatibilityError(update: UpdateFeaturesRequestData.FeatureUpdateKey): Either[FinalizedVersionRange, ApiError] = {
     if (UpdateFeaturesRequest.isDeleteRequest(update)) {
@@ -1924,8 +1961,8 @@ class KafkaController(val config: KafkaConfig,
     val supportedVersionRange = brokerFeatures.supportedFeatures.get(update.feature)
     if (supportedVersionRange == null) {
       Right(new ApiError(Errors.INVALID_REQUEST,
-                         "Could not apply finalized feature update because the provided feature" +
-                         " is not supported."))
+        "Could not apply finalized feature update because the provided feature" +
+          " is not supported."))
     } else {
       var newVersionRange: FinalizedVersionRange = null
       try {
@@ -1939,8 +1976,8 @@ class KafkaController(val config: KafkaConfig,
       if (newVersionRange == null) {
         Right(new ApiError(Errors.INVALID_REQUEST,
           "Could not apply finalized feature update because the provided" +
-          s" maxVersionLevel:${update.maxVersionLevel} is lower than the" +
-          s" supported minVersion:${supportedVersionRange.min}."))
+            s" maxVersionLevel:${update.maxVersionLevel} is lower than the" +
+            s" supported minVersion:${supportedVersionRange.min}."))
       } else {
         val newFinalizedFeature =
           Features.finalizedFeatures(Utils.mkMap(Utils.mkEntry(update.feature, newVersionRange)))
@@ -1951,8 +1988,8 @@ class KafkaController(val config: KafkaConfig,
           Left(newVersionRange)
         } else {
           Right(new ApiError(Errors.INVALID_REQUEST,
-                             "Could not apply finalized feature update because" +
-                             " brokers were found to have incompatible versions for the feature."))
+            "Could not apply finalized feature update because" +
+              " brokers were found to have incompatible versions for the feature."))
         }
       }
     }
@@ -1966,12 +2003,11 @@ class KafkaController(val config: KafkaConfig,
    *
    * If the validation fails, then returned value contains a suitable ApiError.
    *
-   * @param update                 the feature update to be processed.
-   * @param existingVersionRange   the existing FinalizedVersionRange which can be empty when no
-   *                               FinalizedVersionRange exists for the associated feature
-   *
-   * @return                       the new FinalizedVersionRange to be updated into ZK or error
-   *                               as described above.
+   * @param update               the feature update to be processed.
+   * @param existingVersionRange the existing FinalizedVersionRange which can be empty when no
+   *                             FinalizedVersionRange exists for the associated feature
+   * @return the new FinalizedVersionRange to be updated into ZK or error
+   *         as described above.
    */
   private def validateFeatureUpdate(update: UpdateFeaturesRequestData.FeatureUpdateKey,
                                     existingVersionRange: Option[FinalizedVersionRange]): Either[Option[FinalizedVersionRange], ApiError] = {
@@ -1989,43 +2025,43 @@ class KafkaController(val config: KafkaConfig,
         if (existingVersionRange.isEmpty) {
           // Disallow deletion of a non-existing finalized feature.
           Right(new ApiError(Errors.INVALID_REQUEST,
-                             "Can not delete non-existing finalized feature."))
+            "Can not delete non-existing finalized feature."))
         } else {
           Left(Option.empty)
         }
       } else if (update.maxVersionLevel() < 1) {
         // Disallow deletion of a finalized feature without allowDowngrade flag set.
         Right(new ApiError(Errors.INVALID_REQUEST,
-                           s"Can not provide maxVersionLevel: ${update.maxVersionLevel} less" +
-                           s" than 1 without setting the allowDowngrade flag to true in the request."))
+          s"Can not provide maxVersionLevel: ${update.maxVersionLevel} less" +
+            s" than 1 without setting the allowDowngrade flag to true in the request."))
       } else {
         existingVersionRange.map(existing =>
           if (update.maxVersionLevel == existing.max) {
             // Disallow a case where target maxVersionLevel matches existing maxVersionLevel.
             Right(new ApiError(Errors.INVALID_REQUEST,
-                               s"Can not ${if (update.allowDowngrade) "downgrade" else "upgrade"}" +
-                               s" a finalized feature from existing maxVersionLevel:${existing.max}" +
-                               " to the same value."))
+              s"Can not ${if (update.allowDowngrade) "downgrade" else "upgrade"}" +
+                s" a finalized feature from existing maxVersionLevel:${existing.max}" +
+                " to the same value."))
           } else if (update.maxVersionLevel < existing.max && !update.allowDowngrade) {
             // Disallow downgrade of a finalized feature without the allowDowngrade flag set.
             Right(new ApiError(Errors.INVALID_REQUEST,
-                               s"Can not downgrade finalized feature from existing" +
-                               s" maxVersionLevel:${existing.max} to provided" +
-                               s" maxVersionLevel:${update.maxVersionLevel} without setting the" +
-                               " allowDowngrade flag in the request."))
+              s"Can not downgrade finalized feature from existing" +
+                s" maxVersionLevel:${existing.max} to provided" +
+                s" maxVersionLevel:${update.maxVersionLevel} without setting the" +
+                " allowDowngrade flag in the request."))
           } else if (update.allowDowngrade && update.maxVersionLevel > existing.max) {
             // Disallow a request that sets allowDowngrade flag without specifying a
             // maxVersionLevel that's lower than the existing maxVersionLevel.
             Right(new ApiError(Errors.INVALID_REQUEST,
-                               s"When the allowDowngrade flag set in the request, the provided" +
-                               s" maxVersionLevel:${update.maxVersionLevel} can not be greater than" +
-                               s" existing maxVersionLevel:${existing.max}."))
+              s"When the allowDowngrade flag set in the request, the provided" +
+                s" maxVersionLevel:${update.maxVersionLevel} can not be greater than" +
+                s" existing maxVersionLevel:${existing.max}."))
           } else if (update.maxVersionLevel < existing.min) {
             // Disallow downgrade of a finalized feature below the existing finalized
             // minVersionLevel.
             Right(new ApiError(Errors.INVALID_REQUEST,
-                               s"Can not downgrade finalized feature to maxVersionLevel:${update.maxVersionLevel}" +
-                               s" because it's lower than the existing minVersionLevel:${existing.min}."))
+              s"Can not downgrade finalized feature to maxVersionLevel:${update.maxVersionLevel}" +
+                s" because it's lower than the existing minVersionLevel:${existing.min}."))
           } else {
             newVersionRangeOrError(update)
           }
@@ -2137,10 +2173,10 @@ class KafkaController(val config: KafkaConfig,
   }
 
   def electLeaders(
-    partitions: Set[TopicPartition],
-    electionType: ElectionType,
-    callback: ElectLeadersCallback
-  ): Unit = {
+                    partitions: Set[TopicPartition],
+                    electionType: ElectionType,
+                    callback: ElectLeadersCallback
+                  ): Unit = {
     eventManager.put(ReplicaLeaderElection(Some(partitions), electionType, AdminClientTriggered, callback))
   }
 
@@ -2160,11 +2196,11 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processReplicaLeaderElection(
-    partitionsFromAdminClientOpt: Option[Set[TopicPartition]],
-    electionType: ElectionType,
-    electionTrigger: ElectionTrigger,
-    callback: ElectLeadersCallback
-  ): Unit = {
+                                            partitionsFromAdminClientOpt: Option[Set[TopicPartition]],
+                                            electionType: ElectionType,
+                                            electionTrigger: ElectionTrigger,
+                                            callback: ElectLeadersCallback
+                                          ): Unit = {
     if (!isActive) {
       callback(partitionsFromAdminClientOpt.fold(Map.empty[TopicPartition, Either[ApiError, Int]]) { partitions =>
         partitions.iterator.map(partition => partition -> Left(new ApiError(Errors.NOT_CONTROLLER, null))).toMap
@@ -2185,7 +2221,7 @@ class KafkaController(val config: KafkaConfig,
         }
 
         val (partitionsBeingDeleted, livePartitions) = knownPartitions.partition(partition =>
-            topicDeletionManager.isTopicQueuedUpForDeletion(partition.topic))
+          topicDeletionManager.isTopicQueuedUpForDeletion(partition.topic))
         if (partitionsBeingDeleted.nonEmpty) {
           warn(s"Skipping replica leader election ($electionType) for partitions $partitionsBeingDeleted " +
             s"by $electionTrigger since the respective topics are being deleted")
@@ -2220,13 +2256,13 @@ class KafkaController(val config: KafkaConfig,
             }
           case (k, Right(leaderAndIsr)) => k -> Right(leaderAndIsr.leader)
         } ++
-        alreadyValidLeader.map(_ -> Left(new ApiError(Errors.ELECTION_NOT_NEEDED))) ++
-        partitionsBeingDeleted.map(
-          _ -> Left(new ApiError(Errors.INVALID_TOPIC_EXCEPTION, "The topic is being deleted"))
-        ) ++
-        unknownPartitions.map(
-          _ -> Left(new ApiError(Errors.UNKNOWN_TOPIC_OR_PARTITION, "The partition does not exist."))
-        )
+          alreadyValidLeader.map(_ -> Left(new ApiError(Errors.ELECTION_NOT_NEEDED))) ++
+          partitionsBeingDeleted.map(
+            _ -> Left(new ApiError(Errors.INVALID_TOPIC_EXCEPTION, "The topic is being deleted"))
+          ) ++
+          unknownPartitions.map(
+            _ -> Left(new ApiError(Errors.UNKNOWN_TOPIC_OR_PARTITION, "The partition does not exist."))
+          )
 
         debug(s"Waiting for any successful result for election type ($electionType) by $electionTrigger for partitions: $results")
         callback(results)
@@ -2253,7 +2289,7 @@ class KafkaController(val config: KafkaConfig,
         case Left(partitionResults) =>
           resp.setTopics(new util.ArrayList())
           partitionResults
-            .groupBy { case (tp, _) => tp.topic }   // Group by topic
+            .groupBy { case (tp, _) => tp.topic } // Group by topic
             .foreach { case (topic, partitions) =>
               // Add each topic part to the response
               val topicResp = new AlterIsrResponseData.TopicData()
@@ -2275,8 +2311,8 @@ class KafkaController(val config: KafkaConfig,
                       .setIsr(leaderAndIsr.isr.map(Integer.valueOf).asJava)
                       .setCurrentIsrVersion(leaderAndIsr.zkVersion))
                 }
+              }
             }
-          }
       }
       callback.apply(resp)
     }
@@ -2400,6 +2436,7 @@ class KafkaController(val config: KafkaConfig,
             .setProducerIdLen(pidBlock.producerIdLen()))
       }
     }
+
     eventManager.put(AllocateProducerIds(allocateProducerIdsRequest.brokerId,
       allocateProducerIdsRequest.brokerEpoch, eventManagerCallback))
   }
@@ -2446,7 +2483,9 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processRegisterBrokerAndReelect(): Unit = {
+    // 1 注册 broker 信息
     _brokerEpoch = zkClient.registerBroker(brokerInfo)
+    // 2 broker controller 选举
     processReelect()
   }
 
@@ -2454,7 +2493,6 @@ class KafkaController(val config: KafkaConfig,
     activeControllerId = -1
     onControllerResignation()
   }
-
 
   override def process(event: ControllerEvent): Unit = {
     try {
@@ -2481,14 +2519,17 @@ class KafkaController(val config: KafkaConfig,
         case TopicDeletionStopReplicaResponseReceived(replicaId, requestError, partitionErrors) =>
           processTopicDeletionStopReplicaResponseReceived(replicaId, requestError, partitionErrors)
         case BrokerChange =>
+          // 3 监控 broker 上下线
           processBrokerChange()
         case BrokerModifications(brokerId) =>
           processBrokerModification(brokerId)
         case ControllerChange =>
+          // 4 controller 变更
           processControllerChange()
         case Reelect =>
           processReelect()
         case RegisterBrokerAndReelect =>
+          // 1 处理 RegisterBrokerAndReelect 事件
           processRegisterBrokerAndReelect()
         case Expire =>
           processExpire()
@@ -2517,6 +2558,7 @@ class KafkaController(val config: KafkaConfig,
         case AllocateProducerIds(brokerId, brokerEpoch, callback) =>
           processAllocateProducerIds(brokerId, brokerEpoch, callback)
         case Startup =>
+          // 2 处理 processStartup 事件
           processStartup()
       }
     } catch {
@@ -2611,15 +2653,19 @@ class PreferredReplicaElectionHandler(eventManager: ControllerEventManager) exte
 }
 
 class ControllerChangeHandler(eventManager: ControllerEventManager) extends ZNodeChangeHandler {
+  // 1 Controller 在 zk 路径 /controller
   override val path: String = ControllerZNode.path
 
   override def handleCreation(): Unit = eventManager.put(ControllerChange)
+
   override def handleDeletion(): Unit = eventManager.put(Reelect)
+
   override def handleDataChange(): Unit = eventManager.put(ControllerChange)
 }
 
 case class PartitionAndReplica(topicPartition: TopicPartition, replica: Int) {
   def topic: String = topicPartition.topic
+
   def partition: Int = topicPartition.partition
 
   override def toString: String = {
@@ -2651,62 +2697,74 @@ private[controller] class ControllerStats extends KafkaMetricsGroup {
 
 sealed trait ControllerEvent {
   def state: ControllerState
+
   // preempt() is not executed by `ControllerEventThread` but by the main thread.
   def preempt(): Unit
 }
 
 case object ControllerChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object Reelect extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object RegisterBrokerAndReelect extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object Expire extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object ShutdownEventThread extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerShutdown
+
   override def preempt(): Unit = {}
 }
 
 case object AutoPreferredReplicaLeaderElection extends ControllerEvent {
   override def state: ControllerState = ControllerState.AutoLeaderBalance
+
   override def preempt(): Unit = {}
 }
 
 case object UncleanLeaderElectionEnable extends ControllerEvent {
   override def state: ControllerState = ControllerState.UncleanLeaderElectionEnable
+
   override def preempt(): Unit = {}
 }
 
 case class TopicUncleanLeaderElectionEnable(topic: String) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicUncleanLeaderElectionEnable
+
   override def preempt(): Unit = {}
 }
 
 case class ControlledShutdown(id: Int, brokerEpoch: Long, controlledShutdownCallback: Try[Set[TopicPartition]] => Unit) extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControlledShutdown
+
   override def preempt(): Unit = controlledShutdownCallback(Failure(new ControllerMovedException("Controller moved to another broker")))
 }
 
 case class LeaderAndIsrResponseReceived(leaderAndIsrResponse: LeaderAndIsrResponse, brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.LeaderAndIsrResponseReceived
+
   override def preempt(): Unit = {}
 }
 
 case class UpdateMetadataResponseReceived(updateMetadataResponse: UpdateMetadataResponse, brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.UpdateMetadataResponseReceived
+
   override def preempt(): Unit = {}
 }
 
@@ -2714,77 +2772,90 @@ case class TopicDeletionStopReplicaResponseReceived(replicaId: Int,
                                                     requestError: Errors,
                                                     partitionErrors: Map[TopicPartition, Errors]) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicDeletion
+
   override def preempt(): Unit = {}
 }
 
 case object Startup extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object BrokerChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.BrokerChange
+
   override def preempt(): Unit = {}
 }
 
 case class BrokerModifications(brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.BrokerChange
+
   override def preempt(): Unit = {}
 }
 
 case object TopicChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicChange
+
   override def preempt(): Unit = {}
 }
 
 case object LogDirEventNotification extends ControllerEvent {
   override def state: ControllerState = ControllerState.LogDirChange
+
   override def preempt(): Unit = {}
 }
 
 case class PartitionModifications(topic: String) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicChange
+
   override def preempt(): Unit = {}
 }
 
 case object TopicDeletion extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicDeletion
+
   override def preempt(): Unit = {}
 }
 
 case object ZkPartitionReassignment extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = {}
 }
 
 case class ApiPartitionReassignment(reassignments: Map[TopicPartition, Option[Seq[Int]]],
                                     callback: AlterReassignmentsCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = callback(Right(new ApiError(Errors.NOT_CONTROLLER)))
 }
 
 case class PartitionReassignmentIsrChange(partition: TopicPartition) extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = {}
 }
 
 case object IsrChangeNotification extends ControllerEvent {
   override def state: ControllerState = ControllerState.IsrChange
+
   override def preempt(): Unit = {}
 }
 
 case class AlterIsrReceived(brokerId: Int, brokerEpoch: Long, isrsToAlter: Map[TopicPartition, LeaderAndIsr],
                             callback: AlterIsrCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.IsrChange
+
   override def preempt(): Unit = {}
 }
 
 case class ReplicaLeaderElection(
-  partitionsFromAdminClientOpt: Option[Set[TopicPartition]],
-  electionType: ElectionType,
-  electionTrigger: ElectionTrigger,
-  callback: ElectLeadersCallback = _ => {}
-) extends ControllerEvent {
+                                  partitionsFromAdminClientOpt: Option[Set[TopicPartition]],
+                                  electionType: ElectionType,
+                                  electionTrigger: ElectionTrigger,
+                                  callback: ElectLeadersCallback = _ => {}
+                                ) extends ControllerEvent {
   override def state: ControllerState = ControllerState.ManualLeaderBalance
 
   override def preempt(): Unit = callback(
@@ -2795,23 +2866,26 @@ case class ReplicaLeaderElection(
 }
 
 /**
-  * @param partitionsOpt - an Optional set of partitions. If not present, all reassigning partitions are to be listed
-  */
+ * @param partitionsOpt - an Optional set of partitions. If not present, all reassigning partitions are to be listed
+ */
 case class ListPartitionReassignments(partitionsOpt: Option[Set[TopicPartition]],
                                       callback: ListReassignmentsCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.ListPartitionReassignment
+
   override def preempt(): Unit = callback(Right(new ApiError(Errors.NOT_CONTROLLER, null)))
 }
 
 case class UpdateFeatures(request: UpdateFeaturesRequest,
                           callback: UpdateFeaturesCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.UpdateFeatures
+
   override def preempt(): Unit = {}
 }
 
 case class AllocateProducerIds(brokerId: Int, brokerEpoch: Long, callback: Either[Errors, ProducerIdsBlock] => Unit)
-    extends ControllerEvent {
+  extends ControllerEvent {
   override def state: ControllerState = ControllerState.Idle
+
   override def preempt(): Unit = {}
 }
 
@@ -2819,5 +2893,6 @@ case class AllocateProducerIds(brokerId: Int, brokerEpoch: Long, callback: Eithe
 // Used only in test cases
 abstract class MockEvent(val state: ControllerState) extends ControllerEvent {
   def process(): Unit
+
   def preempt(): Unit
 }

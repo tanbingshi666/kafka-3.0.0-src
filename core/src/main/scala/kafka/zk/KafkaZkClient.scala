@@ -93,7 +93,9 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
    * @return broker epoch (znode create transaction id)
    */
   def registerBroker(brokerInfo: BrokerInfo): Long = {
+    // 1 获取 broker 在 zk 的 znode 的路径
     val path = brokerInfo.path
+    // 2 在 zk 创建 broker 对应的临时目录 比如 /brokers/ids/1
     val stat = checkedEphemeralCreate(path, brokerInfo.toJsonBytes)
     info(s"Registered broker ${brokerInfo.broker.id} at path $path with addresses: " +
       s"${brokerInfo.broker.endPoints.map(_.connectionString).mkString(",")}, czxid (broker epoch): ${stat.getCzxid}")
@@ -1702,7 +1704,10 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
    * Pre-create top level paths in ZK if needed.
    */
   def createTopLevelPaths(): Unit = {
-    ZkData.PersistentZkPaths.foreach(makeSurePersistentPathExists(_))
+    // 1 获取持久化目录
+    ZkData.PersistentZkPaths
+      // 2 在 zk 创建持久化目录
+      .foreach(makeSurePersistentPathExists(_))
   }
 
   /**
@@ -1711,6 +1716,7 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
    * @param path
    */
   def makeSurePersistentPathExists(path: String): Unit = {
+    // 往下追
     createRecursive(path, data = null, throwIfPathExists = false)
   }
 
@@ -1803,7 +1809,9 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
       }
     }
 
+    // 1 封装创建 znode 持久化 znode 请求
     val createRequest = CreateRequest(path, data, defaultAcls(path), CreateMode.PERSISTENT)
+    // 2 执行异步创建 znode 请求
     var createResponse = retryRequestUntilConnected(createRequest)
 
     if (throwIfPathExists && createResponse.resultCode == Code.NODEEXISTS) {

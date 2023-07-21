@@ -40,16 +40,19 @@ import scala.jdk.CollectionConverters._
 
 trait ControllerNodeProvider {
   def get(): Option[Node]
+
   def listenerName: ListenerName
+
   def securityProtocol: SecurityProtocol
+
   def saslMechanism: String
 }
 
 object MetadataCacheControllerNodeProvider {
   def apply(
-    config: KafkaConfig,
-    metadataCache: kafka.server.MetadataCache
-  ): MetadataCacheControllerNodeProvider = {
+             config: KafkaConfig,
+             metadataCache: kafka.server.MetadataCache
+           ): MetadataCacheControllerNodeProvider = {
     val listenerName = config.controlPlaneListenerName
       .getOrElse(config.interBrokerListenerName)
 
@@ -66,11 +69,11 @@ object MetadataCacheControllerNodeProvider {
 }
 
 class MetadataCacheControllerNodeProvider(
-  val metadataCache: kafka.server.MetadataCache,
-  val listenerName: ListenerName,
-  val securityProtocol: SecurityProtocol,
-  val saslMechanism: String
-) extends ControllerNodeProvider {
+                                           val metadataCache: kafka.server.MetadataCache,
+                                           val listenerName: ListenerName,
+                                           val securityProtocol: SecurityProtocol,
+                                           val saslMechanism: String
+                                         ) extends ControllerNodeProvider {
   override def get(): Option[Node] = {
     metadataCache.getControllerId
       .flatMap(metadataCache.getAliveBrokerNode(_, listenerName))
@@ -113,14 +116,15 @@ class RaftControllerNodeProvider(val raftManager: RaftManager[ApiMessageAndVersi
 
 object BrokerToControllerChannelManager {
   def apply(
-    controllerNodeProvider: ControllerNodeProvider,
-    time: Time,
-    metrics: Metrics,
-    config: KafkaConfig,
-    channelName: String,
-    threadNamePrefix: Option[String],
-    retryTimeoutMs: Long
-  ): BrokerToControllerChannelManager = {
+             controllerNodeProvider: ControllerNodeProvider,
+             time: Time,
+             metrics: Metrics,
+             config: KafkaConfig,
+             channelName: String,
+             threadNamePrefix: Option[String],
+             retryTimeoutMs: Long
+           ): BrokerToControllerChannelManager = {
+    // 创建 BrokerToControllerChannelManagerImpl
     new BrokerToControllerChannelManagerImpl(
       controllerNodeProvider,
       time,
@@ -136,12 +140,15 @@ object BrokerToControllerChannelManager {
 
 trait BrokerToControllerChannelManager {
   def start(): Unit
+
   def shutdown(): Unit
+
   def controllerApiVersions(): Option[NodeApiVersions]
+
   def sendRequest(
-    request: AbstractRequest.Builder[_ <: AbstractRequest],
-    callback: ControllerRequestCompletionHandler
-  ): Unit
+                   request: AbstractRequest.Builder[_ <: AbstractRequest],
+                   callback: ControllerRequestCompletionHandler
+                 ): Unit
 }
 
 
@@ -153,14 +160,14 @@ trait BrokerToControllerChannelManager {
  * care must be taken to not block on outstanding requests for too long.
  */
 class BrokerToControllerChannelManagerImpl(
-  controllerNodeProvider: ControllerNodeProvider,
-  time: Time,
-  metrics: Metrics,
-  config: KafkaConfig,
-  channelName: String,
-  threadNamePrefix: Option[String],
-  retryTimeoutMs: Long
-) extends BrokerToControllerChannelManager with Logging {
+                                            controllerNodeProvider: ControllerNodeProvider,
+                                            time: Time,
+                                            metrics: Metrics,
+                                            config: KafkaConfig,
+                                            channelName: String,
+                                            threadNamePrefix: Option[String],
+                                            retryTimeoutMs: Long
+                                          ) extends BrokerToControllerChannelManager with Logging {
   private val logContext = new LogContext(s"[BrokerToControllerChannelManager broker=${config.brokerId} name=$channelName] ")
   private val manualMetadataUpdater = new ManualMetadataUpdater()
   private val apiVersions = new ApiVersions()
@@ -177,7 +184,9 @@ class BrokerToControllerChannelManagerImpl(
   }
 
   private[server] def newRequestThread = {
+    //  创建 NetworkClient
     val networkClient = {
+      // 1 构建 PlaintextChannelBuilder
       val channelBuilder = ChannelBuilders.clientChannelBuilder(
         controllerNodeProvider.securityProtocol,
         JaasContext.Type.SERVER,
@@ -188,6 +197,7 @@ class BrokerToControllerChannelManagerImpl(
         config.saslInterBrokerHandshakeRequestEnable,
         logContext
       )
+      // 2 创建 Selector
       val selector = new Selector(
         NetworkReceive.UNLIMITED,
         Selector.NO_IDLE_TIMEOUT_MS,
@@ -199,6 +209,7 @@ class BrokerToControllerChannelManagerImpl(
         channelBuilder,
         logContext
       )
+      // 3 创建 NetworkClient
       new NetworkClient(
         selector,
         manualMetadataUpdater,
@@ -236,13 +247,13 @@ class BrokerToControllerChannelManagerImpl(
   /**
    * Send request to the controller.
    *
-   * @param request         The request to be sent.
-   * @param callback        Request completion callback.
+   * @param request  The request to be sent.
+   * @param callback Request completion callback.
    */
   def sendRequest(
-    request: AbstractRequest.Builder[_ <: AbstractRequest],
-    callback: ControllerRequestCompletionHandler
-  ): Unit = {
+                   request: AbstractRequest.Builder[_ <: AbstractRequest],
+                   callback: ControllerRequestCompletionHandler
+                 ): Unit = {
     requestThread.enqueue(BrokerToControllerQueueItem(
       time.milliseconds(),
       request,
@@ -256,7 +267,7 @@ class BrokerToControllerChannelManagerImpl(
         Some(currentNodeApiVersions)
       else
         Option(apiVersions.get(activeController.idString()))
-  )
+    )
 }
 
 abstract class ControllerRequestCompletionHandler extends RequestCompletionHandler {
@@ -269,20 +280,20 @@ abstract class ControllerRequestCompletionHandler extends RequestCompletionHandl
 }
 
 case class BrokerToControllerQueueItem(
-  createdTimeMs: Long,
-  request: AbstractRequest.Builder[_ <: AbstractRequest],
-  callback: ControllerRequestCompletionHandler
-)
+                                        createdTimeMs: Long,
+                                        request: AbstractRequest.Builder[_ <: AbstractRequest],
+                                        callback: ControllerRequestCompletionHandler
+                                      )
 
 class BrokerToControllerRequestThread(
-  networkClient: KafkaClient,
-  metadataUpdater: ManualMetadataUpdater,
-  controllerNodeProvider: ControllerNodeProvider,
-  config: KafkaConfig,
-  time: Time,
-  threadName: String,
-  retryTimeoutMs: Long
-) extends InterBrokerSendThread(threadName, networkClient, config.controllerSocketTimeoutMs, time, isInterruptible = false) {
+                                       networkClient: KafkaClient,
+                                       metadataUpdater: ManualMetadataUpdater,
+                                       controllerNodeProvider: ControllerNodeProvider,
+                                       config: KafkaConfig,
+                                       time: Time,
+                                       threadName: String,
+                                       retryTimeoutMs: Long
+                                     ) extends InterBrokerSendThread(threadName, networkClient, config.controllerSocketTimeoutMs, time, isInterruptible = false) {
 
   private val requestQueue = new LinkedBlockingDeque[BrokerToControllerQueueItem]()
   private val activeController = new AtomicReference[Node](null)
@@ -354,7 +365,8 @@ class BrokerToControllerRequestThread(
       activeControllerAddress().foreach { controllerAddress => {
         networkClient.disconnect(controllerAddress.idString)
         updateControllerAddress(null)
-      }}
+      }
+      }
 
       requestQueue.putFirst(queueItem)
     } else {

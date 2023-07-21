@@ -1,19 +1,19 @@
 /**
-  * Licensed to the Apache Software Foundation (ASF) under one or more
-  * contributor license agreements.  See the NOTICE file distributed with
-  * this work for additional information regarding copyright ownership.
-  * The ASF licenses this file to You under the Apache License, Version 2.0
-  * (the "License"); you may not use this file except in compliance with
-  * the License.  You may obtain a copy of the License at
-  *
-  *    http://www.apache.org/licenses/LICENSE-2.0
-  *
-  * Unless required by applicable law or agreed to in writing, software
-  * distributed under the License is distributed on an "AS IS" BASIS,
-  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  * See the License for the specific language governing permissions and
-  * limitations under the License.
-  */
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package kafka.server
 
@@ -72,7 +72,7 @@ class RawMetaProperties(val props: Properties = new Properties()) {
 
   def requireVersion(expectedVersion: Int): Unit = {
     if (version != expectedVersion) {
-      throw new RuntimeException(s"Expected version $expectedVersion, but got "+
+      throw new RuntimeException(s"Expected version $expectedVersion, but got " +
         s"version $version")
     }
   }
@@ -107,9 +107,9 @@ object MetaProperties {
 }
 
 case class ZkMetaProperties(
-  clusterId: String,
-  brokerId: Int
-) {
+                             clusterId: String,
+                             brokerId: Int
+                           ) {
   def toProperties: Properties = {
     val properties = new RawMetaProperties()
     properties.version = 0
@@ -124,9 +124,9 @@ case class ZkMetaProperties(
 }
 
 case class MetaProperties(
-  clusterId: String,
-  nodeId: Int,
-) {
+                           clusterId: String,
+                           nodeId: Int,
+                         ) {
   def toProperties: Properties = {
     val properties = new RawMetaProperties()
     properties.version = 1
@@ -135,26 +135,28 @@ case class MetaProperties(
     properties.props
   }
 
-  override def toString: String  = {
+  override def toString: String = {
     s"MetaProperties(clusterId=$clusterId, nodeId=$nodeId)"
   }
 }
 
 object BrokerMetadataCheckpoint extends Logging {
   def getBrokerMetadataAndOfflineDirs(
-    logDirs: collection.Seq[String],
-    ignoreMissing: Boolean
-  ): (RawMetaProperties, collection.Seq[String]) = {
+                                       logDirs: collection.Seq[String],
+                                       ignoreMissing: Boolean
+                                     ): (RawMetaProperties, collection.Seq[String]) = {
     require(logDirs.nonEmpty, "Must have at least one log dir to read meta.properties")
 
     val brokerMetadataMap = mutable.HashMap[String, Properties]()
     val offlineDirs = mutable.ArrayBuffer.empty[String]
 
     for (logDir <- logDirs) {
+      // 1 获取 meta.properties 文件输入流
       val brokerCheckpointFile = new File(logDir, "meta.properties")
       val brokerCheckpoint = new BrokerMetadataCheckpoint(brokerCheckpointFile)
 
       try {
+        // 2 读取 meta.properties 数据
         brokerCheckpoint.read() match {
           case Some(properties) =>
             brokerMetadataMap += logDir -> properties

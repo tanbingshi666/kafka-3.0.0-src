@@ -85,6 +85,7 @@ object KafkaServer {
  * to start up and shutdown a single Kafka node.
  */
 class KafkaServer(
+                   // server.properties 文件内容
                    val config: KafkaConfig,
                    time: Time = Time.SYSTEM,
                    threadNamePrefix: Option[String] = None,
@@ -200,9 +201,10 @@ class KafkaServer(
         // 1.2 在 zk 创建持久化 znodes
         initZkClient(time)
 
-        // 2 创建 ZkConfigRepository
+        // 2 创建 ZkConfigRepository (类似于配置中心)
         configRepository = new ZkConfigRepository(
           // 创建 AdminZkClient (与 ZK 交互)
+          // 比如在 zk 创建 topic、broker元数据等等
           new AdminZkClient(zkClient)
         )
 
@@ -218,9 +220,11 @@ class KafkaServer(
         info(s"Cluster ID = ${clusterId}")
 
         /* load metadata */
-        // 4 加载磁盘元数据
+        // 4 加载磁盘元数据 核心加载 meta.properties 获取集群信息 (比如 clusterId、version、etc)
         val (preloadedBrokerMetadataCheckpoint, initialOfflineDirs) =
-        BrokerMetadataCheckpoint.getBrokerMetadataAndOfflineDirs(config.logDirs, ignoreMissing = true)
+        BrokerMetadataCheckpoint.getBrokerMetadataAndOfflineDirs(
+          // 从配置文件获取 key = log.dirs 对应的值 也即存储数据目录
+          config.logDirs, ignoreMissing = true)
 
         if (preloadedBrokerMetadataCheckpoint.version != 0) {
           throw new RuntimeException(s"Found unexpected version in loaded `meta.properties`: " +
@@ -229,13 +233,14 @@ class KafkaServer(
         }
 
         /* check cluster id */
+        // 4.1 检查集群 id 也即比较 zk 的集群 id 是否和 meta.properties 文件的 clusterId 的值是否一样
         if (preloadedBrokerMetadataCheckpoint.clusterId.isDefined && preloadedBrokerMetadataCheckpoint.clusterId.get != clusterId)
           throw new InconsistentClusterIdException(
             s"The Cluster ID ${clusterId} doesn't match stored clusterId ${preloadedBrokerMetadataCheckpoint.clusterId} in meta.properties. " +
               s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
 
         /* generate brokerId */
-        // 5 从配置文件获取 broker.id
+        // 5 从优先从配置文件 server.properties 文件再从meta.properties 获取 broker.id
         config.brokerId = getOrGenerateBrokerId(preloadedBrokerMetadataCheckpoint)
 
         // 6 创建 LogContext
@@ -259,7 +264,7 @@ class KafkaServer(
         /* register broker metrics */
         _brokerTopicStats = new BrokerTopicStats
 
-        // 9 创建 QuotaManagers
+        // 9 创建配额管理 QuotaManagers
         quotaManagers = QuotaFactory.instantiate(config, metrics, time, threadNamePrefix.getOrElse(""))
         KafkaBroker.notifyClusterListeners(clusterId, kafkaMetricsReporters ++ metrics.reporters.asScala)
 
@@ -267,10 +272,11 @@ class KafkaServer(
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
         /* start log manager */
-        // 11.1 创建 LogManager
+        // 11.1 创建当前 broker 管理自身 log 数据组件 LogManager
         logManager = LogManager(config, initialOfflineDirs,
           new ZkConfigRepository(new AdminZkClient(zkClient)),
           kafkaScheduler, time, brokerTopicStats, logDirFailureChannel, config.usesTopicId)
+        // broker 状态切换
         _brokerState = BrokerState.RECOVERY
         // 11.2 启动 LogManager
         logManager.startup(zkClient.getAllTopicsInCluster())
@@ -282,7 +288,7 @@ class KafkaServer(
         tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
         credentialProvider = new CredentialProvider(ScramMechanism.mechanismNames, tokenCache)
 
-        // 13.1 创建 BrokerToControllerChannelManagerImpl
+        // 13.1 创建 broker 与 Controller 交互组件 BrokerToControllerChannelManagerImpl
         clientToControllerChannelManager = BrokerToControllerChannelManager(
           controllerNodeProvider = MetadataCacheControllerNodeProvider(config, metadataCache),
           time = time,
@@ -322,7 +328,7 @@ class KafkaServer(
 
         /* start replica manager */
         alterIsrManager = if (config.interBrokerProtocolVersion.isAlterIsrSupported) {
-          // 15.1 创建 AlterIsrManager
+          // 15.1 创建 AlterIsrManager 一般用于运维 Topic Partition ISR
           AlterIsrManager(
             config = config,
             metadataCache = metadataCache,
@@ -339,7 +345,7 @@ class KafkaServer(
         // 15.2 启动 AlterIsrManager
         alterIsrManager.start()
 
-        // 16.1 创建 ReplicaManager
+        // 16.1 创建管理 topic partition 副本管理组件 ReplicaManager
         _replicaManager = createReplicaManager(isShuttingDown)
         // 16.2 启动 ReplicaManager
         replicaManager.startup()
@@ -350,6 +356,7 @@ class KafkaServer(
         val brokerEpoch = zkClient.registerBroker(brokerInfo)
 
         // Now that the broker is successfully registered, checkpoint its metadata
+        // 17.3 checkpoint broker 元数据信息
         checkpointBrokerMetadata(ZkMetaProperties(clusterId, config.brokerId))
 
         /* start token manager */
@@ -369,7 +376,7 @@ class KafkaServer(
 
         /* start group coordinator */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
-        // 21.1 创建 GroupCoordinator
+        // 21.1 创建消费者组协调器 GroupCoordinator
         groupCoordinator = GroupCoordinator(config, replicaManager, Time.SYSTEM, metrics)
         // 21.2 启动 GroupCoordinator
         groupCoordinator.startup(() => zkClient.getTopicPartitionCount(Topic.GROUP_METADATA_TOPIC_NAME).getOrElse(config.offsetsTopicPartitions))
@@ -389,7 +396,7 @@ class KafkaServer(
 
         /* start transaction coordinator, with a separate background thread scheduler for transaction expiration and log loading */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
-        // 23.1 创建 TransactionCoordinator
+        // 23.1 创建事务协调器 TransactionCoordinator
         transactionCoordinator = TransactionCoordinator(config, replicaManager, new KafkaScheduler(threads = 1, threadNamePrefix = "transaction-log-manager-"),
           () => producerIdManager, metrics, metadataCache, Time.SYSTEM)
         // 23.2 启动 TransactionCoordinator
@@ -397,7 +404,7 @@ class KafkaServer(
           () => zkClient.getTopicPartitionCount(Topic.TRANSACTION_STATE_TOPIC_NAME).getOrElse(config.transactionTopicPartitions))
 
         /* start auto topic creation manager */
-        // 24 创建 DefaultAutoTopicCreationManager
+        // 24 创建自动主题创建器(比如创建内部主题 __consumer_offsets) DefaultAutoTopicCreationManager
         this.autoTopicCreationManager = AutoTopicCreationManager(
           config,
           metadataCache,
@@ -442,7 +449,7 @@ class KafkaServer(
           fetchManager, brokerTopicStats, clusterId, time,
           tokenManager, apiVersionManager)
 
-        // 28 创建 dataPlane KafkaRequestHandlerPool (里面启动 KafkaRequestHandler 线程组)
+        // 28 创建 dataPlane 处理线程池 KafkaRequestHandlerPool (里面启动 KafkaRequestHandler 线程组)
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(
           config.brokerId,
           // SocketServer 的 RequestChannel
@@ -542,7 +549,9 @@ class KafkaServer(
   }
 
   def createBrokerInfo: BrokerInfo = {
+    // 1 默认当前 broker 主机和端口信息 比如 hadoop101:9092
     val endPoints = config.advertisedListeners.map(e => s"${e.host}:${e.port}")
+    // 2 从 zk 查询 broker.id 对应的信息
     zkClient.getAllBrokersInCluster.filter(_.id != config.brokerId).foreach { broker =>
       val commonEndPoints = broker.endPoints.map(e => s"${e.host}:${e.port}").intersect(endPoints)
       require(commonEndPoints.isEmpty, s"Configured end points ${commonEndPoints.mkString(",")} in" +
@@ -556,6 +565,7 @@ class KafkaServer(
         endpoint
     }
 
+    // 3 获取更新 broker 信息
     val updatedEndpoints = listeners.map(endpoint =>
       if (Utils.isBlank(endpoint.host))
         endpoint.copy(host = InetAddress.getLocalHost.getCanonicalHostName)
@@ -564,6 +574,8 @@ class KafkaServer(
     )
 
     val jmxPort = System.getProperty("com.sun.management.jmxremote.port", "-1").toInt
+    // 4 创建 broker 信息
+    // zk path -> /brokers/ids/{broker.id}
     BrokerInfo(
       Broker(config.brokerId, updatedEndpoints, config.rack, brokerFeatures.supportedFeatures),
       config.interBrokerProtocolVersion,
