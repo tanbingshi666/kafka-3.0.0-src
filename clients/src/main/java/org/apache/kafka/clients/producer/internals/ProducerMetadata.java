@@ -42,12 +42,16 @@ public class ProducerMetadata extends Metadata {
     private final Logger log;
     private final Time time;
 
-    public ProducerMetadata(long refreshBackoffMs,
-                            long metadataExpireMs,
-                            long metadataIdleMs,
-                            LogContext logContext,
-                            ClusterResourceListeners clusterResourceListeners,
-                            Time time) {
+    public ProducerMetadata(
+            // 100ms
+            long refreshBackoffMs,
+            // 5min
+            long metadataExpireMs,
+            // 5min
+            long metadataIdleMs,
+            LogContext logContext,
+            ClusterResourceListeners clusterResourceListeners,
+            Time time) {
         super(refreshBackoffMs, metadataExpireMs, logContext, clusterResourceListeners);
         this.metadataIdleMs = metadataIdleMs;
         this.log = logContext.logger(ProducerMetadata.class);
@@ -116,6 +120,7 @@ public class ProducerMetadata extends Metadata {
     public synchronized void awaitUpdate(final int lastVersion, final long timeoutMs) throws InterruptedException {
         long currentTimeMs = time.milliseconds();
         long deadlineMs = currentTimeMs + timeoutMs < 0 ? Long.MAX_VALUE : currentTimeMs + timeoutMs;
+        // 回调 update()
         time.waitObject(this, () -> {
             // Throw fatal exceptions, if there are any. Recoverable topic errors will be handled by the caller.
             maybeThrowFatalException();
@@ -128,6 +133,7 @@ public class ProducerMetadata extends Metadata {
 
     @Override
     public synchronized void update(int requestVersion, MetadataResponse response, boolean isPartialUpdate, long nowMs) {
+        // 1 处理拉取元数据更新
         super.update(requestVersion, response, isPartialUpdate, nowMs);
 
         // Remove all topics in the response that are in the new topic set. Note that if an error was encountered for a
@@ -138,6 +144,7 @@ public class ProducerMetadata extends Metadata {
             }
         }
 
+        // 2 唤醒
         notifyAll();
     }
 

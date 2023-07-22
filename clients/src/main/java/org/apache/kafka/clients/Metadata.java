@@ -238,6 +238,7 @@ public class Metadata implements Closeable {
     public synchronized void bootstrap(List<InetSocketAddress> addresses) {
         this.needFullUpdate = true;
         this.updateVersion += 1;
+        // 根据 address 连接 kafka-broker 创建元数据缓存 MetadataCache
         this.cache = MetadataCache.bootstrap(addresses);
     }
 

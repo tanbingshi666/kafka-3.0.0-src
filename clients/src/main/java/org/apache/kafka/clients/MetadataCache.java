@@ -65,15 +65,25 @@ public class MetadataCache {
         this(clusterId, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds, null);
     }
 
-    private MetadataCache(String clusterId,
-                          Map<Integer, Node> nodes,
-                          Collection<PartitionMetadata> partitions,
-                          Set<String> unauthorizedTopics,
-                          Set<String> invalidTopics,
-                          Set<String> internalTopics,
-                          Node controller,
-                          Map<String, Uuid> topicIds,
-                          Cluster clusterInstance) {
+    private MetadataCache(
+            // 1 null
+            String clusterId,
+            // 2 brokers 地址
+            Map<Integer, Node> nodes,
+            // 3 Collections.emptyList()
+            Collection<PartitionMetadata> partitions,
+            // 4 Collections.emptySet()
+            Set<String> unauthorizedTopics,
+            // 5 Collections.emptySet()
+            Set<String> invalidTopics,
+            // 6 Collections.emptySet()
+            Set<String> internalTopics,
+            // 7 null
+            Node controller,
+            // 8 Collections.emptyMap()
+            Map<String, Uuid> topicIds,
+            // 9 Cluster
+            Cluster clusterInstance) {
         this.clusterId = clusterId;
         this.nodes = nodes;
         this.unauthorizedTopics = unauthorizedTopics;
@@ -123,14 +133,14 @@ public class MetadataCache {
      * metadata is presumed to be more recent than the cache's metadata, and therefore all overlapping metadata will
      * be overridden.
      *
-     * @param newClusterId the new cluster Id
-     * @param newNodes the new set of nodes
-     * @param addPartitions partitions to add
+     * @param newClusterId          the new cluster Id
+     * @param newNodes              the new set of nodes
+     * @param addPartitions         partitions to add
      * @param addUnauthorizedTopics unauthorized topics to add
-     * @param addInternalTopics internal topics to add
-     * @param newController the new controller node
-     * @param topicIds the mapping from topic name to topic ID from the MetadataResponse
-     * @param retainTopic returns whether a topic's metadata should be retained
+     * @param addInternalTopics     internal topics to add
+     * @param newController         the new controller node
+     * @param topicIds              the mapping from topic name to topic ID from the MetadataResponse
+     * @param retainTopic           returns whether a topic's metadata should be retained
      * @return the merged metadata cache
      */
     MetadataCache mergeWith(String newClusterId,
@@ -185,8 +195,8 @@ public class MetadataCache {
      * In other words, all elements of {@code baseSet} will be contained in the result, with additional non-overlapping
      * elements in {@code fillSet} where the predicate is true.
      *
-     * @param baseSet the base elements for the resulting set
-     * @param fillSet elements to be filled into the resulting set
+     * @param baseSet   the base elements for the resulting set
+     * @param fillSet   elements to be filled into the resulting set
      * @param predicate tested against the fill set to determine whether elements should be added to the base set
      */
     private static <T> Set<T> fillSet(Set<T> baseSet, Set<T> fillSet, Predicate<T> predicate) {
@@ -209,15 +219,25 @@ public class MetadataCache {
     }
 
     static MetadataCache bootstrap(List<InetSocketAddress> addresses) {
+        // 1 解析 broker 地址
         Map<Integer, Node> nodes = new HashMap<>();
         int nodeId = -1;
         for (InetSocketAddress address : addresses) {
             nodes.put(nodeId, new Node(nodeId, address.getHostString(), address.getPort()));
             nodeId--;
         }
-        return new MetadataCache(null, nodes, Collections.emptyList(),
-                Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
-                null, Collections.emptyMap(), Cluster.bootstrap(addresses));
+        // 3 创建 MetadataCache
+        return new MetadataCache(
+                null,
+                nodes,
+                Collections.emptyList(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                null,
+                Collections.emptyMap(),
+                // 2 根据解析 broker 地址创建 Cluster
+                Cluster.bootstrap(addresses));
     }
 
     static MetadataCache empty() {

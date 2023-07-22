@@ -74,14 +74,17 @@ public class Producer extends Thread {
             String messageStr = "Message_" + messageKey;
             long startTime = System.currentTimeMillis();
             if (isAsync) { // Send asynchronously
+                // 1 异步发送消息
                 producer.send(new ProducerRecord<>(topic,
-                    messageKey,
-                    messageStr), new DemoCallBack(startTime, messageKey, messageStr));
+                                messageKey,
+                                messageStr),
+                        new DemoCallBack(startTime, messageKey, messageStr));
             } else { // Send synchronously
                 try {
+                    // 2 同步发送消息
                     producer.send(new ProducerRecord<>(topic,
-                        messageKey,
-                        messageStr)).get();
+                            messageKey,
+                            messageStr)).get();
                     System.out.println("Sent message: (" + messageKey + ", " + messageStr + ")");
                 } catch (InterruptedException | ExecutionException e) {
                     e.printStackTrace();
@@ -120,9 +123,9 @@ class DemoCallBack implements Callback {
         long elapsedTime = System.currentTimeMillis() - startTime;
         if (metadata != null) {
             System.out.println(
-                "message(" + key + ", " + message + ") sent to partition(" + metadata.partition() +
-                    "), " +
-                    "offset(" + metadata.offset() + ") in " + elapsedTime + " ms");
+                    "message(" + key + ", " + message + ") sent to partition(" + metadata.partition() +
+                            "), " +
+                            "offset(" + metadata.offset() + ") in " + elapsedTime + " ms");
         } else {
             exception.printStackTrace();
         }

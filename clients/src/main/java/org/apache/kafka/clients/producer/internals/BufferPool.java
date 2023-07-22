@@ -51,7 +51,9 @@ public class BufferPool {
     private final ReentrantLock lock;
     private final Deque<ByteBuffer> free;
     private final Deque<Condition> waiters;
-    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
+    /**
+     * Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.
+     */
     private long nonPooledAvailableMemory;
     private final Metrics metrics;
     private final Time time;
@@ -61,28 +63,31 @@ public class BufferPool {
     /**
      * Create a new buffer pool
      *
-     * @param memory The maximum amount of memory that this buffer pool can allocate
-     * @param poolableSize The buffer size to cache in the free list rather than deallocating
-     * @param metrics instance of Metrics
-     * @param time time instance
+     * @param memory        The maximum amount of memory that this buffer pool can allocate
+     * @param poolableSize  The buffer size to cache in the free list rather than deallocating
+     * @param metrics       instance of Metrics
+     * @param time          time instance
      * @param metricGrpName logical group name for metrics
      */
     public BufferPool(long memory, int poolableSize, Metrics metrics, Time time, String metricGrpName) {
+        // 默认 16KB
         this.poolableSize = poolableSize;
         this.lock = new ReentrantLock();
         this.free = new ArrayDeque<>();
         this.waiters = new ArrayDeque<>();
+        // 默认 32MB
         this.totalMemory = memory;
+        // 默认 32MB
         this.nonPooledAvailableMemory = memory;
         this.metrics = metrics;
         this.time = time;
         this.waitTime = this.metrics.sensor(WAIT_TIME_SENSOR_NAME);
         MetricName rateMetricName = metrics.metricName("bufferpool-wait-ratio",
-                                                   metricGrpName,
-                                                   "The fraction of time an appender waits for space allocation.");
+                metricGrpName,
+                "The fraction of time an appender waits for space allocation.");
         MetricName totalMetricName = metrics.metricName("bufferpool-wait-time-total",
-                                                   metricGrpName,
-                                                   "The total time an appender waits for space allocation.");
+                metricGrpName,
+                "The total time an appender waits for space allocation.");
 
         Sensor bufferExhaustedRecordSensor = metrics.sensor("buffer-exhausted-records");
         MetricName bufferExhaustedRateMetricName = metrics.metricName("buffer-exhausted-rate", metricGrpName, "The average per-second number of record sends that are dropped due to buffer exhaustion");
@@ -97,19 +102,19 @@ public class BufferPool {
      * Allocate a buffer of the given size. This method blocks if there is not enough memory and the buffer pool
      * is configured with blocking mode.
      *
-     * @param size The buffer size to allocate in bytes
+     * @param size             The buffer size to allocate in bytes
      * @param maxTimeToBlockMs The maximum time in milliseconds to block for buffer memory to be available
      * @return The buffer
-     * @throws InterruptedException If the thread is interrupted while blocked
+     * @throws InterruptedException     If the thread is interrupted while blocked
      * @throws IllegalArgumentException if size is larger than the total memory controlled by the pool (and hence we would block
-     *         forever)
+     *                                  forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
         if (size > this.totalMemory)
             throw new IllegalArgumentException("Attempt to allocate " + size
-                                               + " bytes, but there is a hard limit of "
-                                               + this.totalMemory
-                                               + " on memory allocations.");
+                    + " bytes, but there is a hard limit of "
+                    + this.totalMemory
+                    + " on memory allocations.");
 
         ByteBuffer buffer = null;
         this.lock.lock();
@@ -252,8 +257,8 @@ public class BufferPool {
      * memory as free.
      *
      * @param buffer The buffer to return
-     * @param size The size of the buffer to mark as deallocated, note that this may be smaller than buffer.capacity
-     *             since the buffer may re-allocate itself during in-place compression
+     * @param size   The size of the buffer to mark as deallocated, note that this may be smaller than buffer.capacity
+     *               since the buffer may re-allocate itself during in-place compression
      */
     public void deallocate(ByteBuffer buffer, int size) {
         lock.lock();

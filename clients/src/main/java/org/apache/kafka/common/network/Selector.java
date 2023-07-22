@@ -213,6 +213,7 @@ public class Selector implements Selectable, AutoCloseable {
                     boolean metricsPerConnection,
                     ChannelBuilder channelBuilder,
                     LogContext logContext) {
+        // 往下追
         this(maxReceiveSize, connectionMaxIdleMs, failedAuthenticationDelayMs, metrics, time, metricGrpPrefix, metricTags, metricsPerConnection, false, channelBuilder, MemoryPool.NONE, logContext);
     }
 
@@ -225,11 +226,22 @@ public class Selector implements Selectable, AutoCloseable {
                     boolean metricsPerConnection,
                     ChannelBuilder channelBuilder,
                     LogContext logContext) {
+        // 往下追
         this(maxReceiveSize, connectionMaxIdleMs, NO_FAILED_AUTHENTICATION_DELAY, metrics, time, metricGrpPrefix, metricTags, metricsPerConnection, channelBuilder, logContext);
     }
 
     public Selector(long connectionMaxIdleMS, Metrics metrics, Time time, String metricGrpPrefix, ChannelBuilder channelBuilder, LogContext logContext) {
-        this(NetworkReceive.UNLIMITED, connectionMaxIdleMS, metrics, time, metricGrpPrefix, Collections.emptyMap(), true, channelBuilder, logContext);
+        // 往下追
+        this(
+                NetworkReceive.UNLIMITED,
+                connectionMaxIdleMS,
+                metrics,
+                time,
+                metricGrpPrefix,
+                Collections.emptyMap(),
+                true,
+                channelBuilder,
+                logContext);
     }
 
     public Selector(long connectionMaxIdleMS, int failedAuthenticationDelayMs, Metrics metrics, Time time, String metricGrpPrefix, ChannelBuilder channelBuilder, LogContext logContext) {
@@ -253,13 +265,18 @@ public class Selector implements Selectable, AutoCloseable {
     @Override
     public void connect(String id, InetSocketAddress address, int sendBufferSize, int receiveBufferSize) throws IOException {
         ensureNotRegistered(id);
+        // 1 创建 SocketChannel
         SocketChannel socketChannel = SocketChannel.open();
         SelectionKey key = null;
         try {
+            // 2 配置 SocketChannel
             configureSocketChannel(socketChannel, sendBufferSize, receiveBufferSize);
+            // 3 执行连接 broker 节点
             boolean connected = doConnect(socketChannel, address);
+            // 4 往 SocketChannel 注册 OP_CONNECT 事件
             key = registerChannel(id, socketChannel, SelectionKey.OP_CONNECT);
 
+            // 5 连接 broker 成功
             if (connected) {
                 // OP_CONNECT won't trigger for immediately connected channels
                 log.debug("Immediately connected to node {}", id);

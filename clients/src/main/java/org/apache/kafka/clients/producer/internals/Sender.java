@@ -173,12 +173,12 @@ public class Sender implements Runnable {
     }
 
     /**
-     *  Get the in-flight batches that has reached delivery timeout.
+     * Get the in-flight batches that has reached delivery timeout.
      */
     private List<ProducerBatch> getExpiredInflightBatches(long now) {
         List<ProducerBatch> expiredBatches = new ArrayList<>();
 
-        for (Iterator<Map.Entry<TopicPartition, List<ProducerBatch>>> batchIt = inFlightBatches.entrySet().iterator(); batchIt.hasNext();) {
+        for (Iterator<Map.Entry<TopicPartition, List<ProducerBatch>>> batchIt = inFlightBatches.entrySet().iterator(); batchIt.hasNext(); ) {
             Map.Entry<TopicPartition, List<ProducerBatch>> entry = batchIt.next();
             List<ProducerBatch> partitionInFlightBatches = entry.getValue();
             if (partitionInFlightBatches != null) {
@@ -194,7 +194,7 @@ public class Sender implements Runnable {
                             expiredBatches.add(batch);
                         } else {
                             throw new IllegalStateException(batch.topicPartition + " batch created at " +
-                                batch.createdMs + " gets unexpected final state " + batch.finalState());
+                                    batch.createdMs + " gets unexpected final state " + batch.finalState());
                         }
                     } else {
                         accumulator.maybeUpdateNextBatchExpiryTime(batch);
@@ -240,6 +240,7 @@ public class Sender implements Runnable {
         // main loop, runs until close is called
         while (running) {
             try {
+                // 1 持续运行直到关闭
                 runOnce();
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
@@ -293,9 +294,9 @@ public class Sender implements Runnable {
 
     /**
      * Run a single iteration of sending
-     *
      */
     void runOnce() {
+        // 1 判断是否开启事务
         if (transactionManager != null) {
             try {
                 transactionManager.maybeResolveSequences();
@@ -324,13 +325,18 @@ public class Sender implements Runnable {
         }
 
         long currentTimeMs = time.milliseconds();
+        // 2 检查哪些批次数据可以发送 如果有批次 执行发送
         long pollTimeout = sendProducerData(currentTimeMs);
+        // 3 从集群拉取元数据或者处理发送数据响应结果 (如果没有建立与集群连接 则建立连接)
         client.poll(pollTimeout, currentTimeMs);
     }
 
     private long sendProducerData(long now) {
+        // 1 获取 Cluster (里面保存 broker 地址)
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        // 2 检查哪些批次数据可以发送 (如果没有数据可发送 则后面的代码基本都是跳过执行)
+        // 遍历 batches 哪些 TopicPartition 对应的 ProducerRecord 需要发送哪些 broker 节点
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
@@ -342,11 +348,12 @@ public class Sender implements Runnable {
                 this.metadata.add(topic, now);
 
             log.debug("Requesting metadata update due to unknown leader topics from the batched records: {}",
-                result.unknownLeaderTopics);
+                    result.unknownLeaderTopics);
             this.metadata.requestUpdate();
         }
 
         // remove any nodes we aren't ready to send to
+        // 3 遍历 broker 节点是否已经建立连接
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
@@ -358,7 +365,11 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
-        Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
+        // 4 获取哪些 ProducerBatch 发送给哪些 broker
+        Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(
+                cluster, result.readyNodes, this.maxRequestSize, now);
+
+        // 5 将 ProducerBatch 添加到 inFlightBatches
         addToInflightBatches(batches);
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
@@ -380,7 +391,7 @@ public class Sender implements Runnable {
             log.trace("Expired {} batches in accumulator", expiredBatches.size());
         for (ProducerBatch expiredBatch : expiredBatches) {
             String errorMessage = "Expiring " + expiredBatch.recordCount + " record(s) for " + expiredBatch.topicPartition
-                + ":" + (now - expiredBatch.createdMs) + " ms has passed since batch creation";
+                    + ":" + (now - expiredBatch.createdMs) + " ms has passed since batch creation";
             failBatch(expiredBatch, new TimeoutException(errorMessage), false);
             if (transactionManager != null && expiredBatch.inRetry()) {
                 // This ensures that no new batches are drained until the current in flight batches are fully resolved.
@@ -405,6 +416,8 @@ public class Sender implements Runnable {
             // otherwise the select time will be the time difference between now and the metadata expiry time;
             pollTimeout = 0;
         }
+
+        // 6 往哪些 broker 节点分别发送哪些 ProducerBatch
         sendProduceRequests(batches, now);
         return pollTimeout;
     }
@@ -465,7 +478,7 @@ public class Sender implements Runnable {
 
             long currentTimeMs = time.milliseconds();
             ClientRequest clientRequest = client.newClientRequest(targetNode.idString(), requestBuilder, currentTimeMs,
-                true, requestTimeoutMs, nextRequestHandler);
+                    true, requestTimeoutMs, nextRequestHandler);
             log.debug("Sending transactional request {} to node {} with correlation ID {}", requestBuilder, targetNode, clientRequest.correlationId());
             client.send(clientRequest, currentTimeMs);
             transactionManager.setInFlightCorrelationId(clientRequest.correlationId());
@@ -543,7 +556,7 @@ public class Sender implements Runnable {
         int correlationId = requestHeader.correlationId();
         if (response.wasDisconnected()) {
             log.trace("Cancelled request with header {} due to node {} being disconnected",
-                requestHeader, response.destination());
+                    requestHeader, response.destination());
             for (ProducerBatch batch : batches.values())
                 completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NETWORK_EXCEPTION, String.format("Disconnected from node %s", response.destination())),
                         correlationId, now);
@@ -567,9 +580,9 @@ public class Sender implements Runnable {
                             p.logAppendTimeMs(),
                             p.logStartOffset(),
                             p.recordErrors()
-                                .stream()
-                                .map(e -> new ProduceResponse.RecordError(e.batchIndex(), e.batchIndexErrorMessage()))
-                                .collect(Collectors.toList()),
+                                    .stream()
+                                    .map(e -> new ProduceResponse.RecordError(e.batchIndex(), e.batchIndexErrorMessage()))
+                                    .collect(Collectors.toList()),
                             p.errorMessage());
                     ProducerBatch batch = batches.get(tp);
                     completeBatch(batch, partResp, correlationId, now);
@@ -587,10 +600,10 @@ public class Sender implements Runnable {
     /**
      * Complete or retry the given batch of records.
      *
-     * @param batch The record batch
-     * @param response The produce response
+     * @param batch         The record batch
+     * @param response      The produce response
      * @param correlationId The correlation id for the request
-     * @param now The current POSIX timestamp in milliseconds
+     * @param now           The current POSIX timestamp in milliseconds
      */
     private void completeBatch(ProducerBatch batch, ProduceResponse.PartitionResponse response, long correlationId,
                                long now) {
@@ -601,11 +614,11 @@ public class Sender implements Runnable {
             // If the batch is too large, we split the batch and send the split batches again. We do not decrement
             // the retry attempts in this case.
             log.warn(
-                "Got error produce response in correlation id {} on topic-partition {}, splitting and retrying ({} attempts left). Error: {}",
-                correlationId,
-                batch.topicPartition,
-                this.retries - batch.attempts(),
-                formatErrMsg(response));
+                    "Got error produce response in correlation id {} on topic-partition {}, splitting and retrying ({} attempts left). Error: {}",
+                    correlationId,
+                    batch.topicPartition,
+                    this.retries - batch.attempts(),
+                    formatErrMsg(response));
             if (transactionManager != null)
                 transactionManager.removeInFlightBatch(batch);
             this.accumulator.splitAndReenqueue(batch);
@@ -614,11 +627,11 @@ public class Sender implements Runnable {
         } else if (error != Errors.NONE) {
             if (canRetry(batch, response, now)) {
                 log.warn(
-                    "Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
-                    correlationId,
-                    batch.topicPartition,
-                    this.retries - batch.attempts() - 1,
-                    formatErrMsg(response));
+                        "Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
+                        correlationId,
+                        batch.topicPartition,
+                        this.retries - batch.attempts() - 1,
+                        formatErrMsg(response));
                 reenqueueBatch(batch, now);
             } else if (error == Errors.DUPLICATE_SEQUENCE_NUMBER) {
                 // If we have received a duplicate sequence error, it means that the sequence number has advanced beyond
@@ -636,11 +649,11 @@ public class Sender implements Runnable {
             if (error.exception() instanceof InvalidMetadataException) {
                 if (error.exception() instanceof UnknownTopicOrPartitionException) {
                     log.warn("Received unknown topic or partition error in produce request on partition {}. The " +
-                            "topic-partition may not exist or the user may not have Describe access to it",
-                        batch.topicPartition);
+                                    "topic-partition may not exist or the user may not have Describe access to it",
+                            batch.topicPartition);
                 } else {
                     log.warn("Received invalid metadata error in produce request on partition {} due to {}. Going " +
-                            "to request metadata update now", batch.topicPartition,
+                                    "to request metadata update now", batch.topicPartition,
                             error.exception(response.errorMessage).toString());
                 }
                 metadata.requestUpdate();
@@ -727,7 +740,7 @@ public class Sender implements Runnable {
                     // will be present in the response. To avoid confusion for the remaining records, we
                     // return a generic exception.
                     return new KafkaException("Failed to append record because it was part of a batch " +
-                        "which had one more more invalid records");
+                            "which had one more more invalid records");
                 }
             };
 
@@ -736,18 +749,18 @@ public class Sender implements Runnable {
     }
 
     private void failBatch(
-        ProducerBatch batch,
-        RuntimeException topLevelException,
-        boolean adjustSequenceNumbers
+            ProducerBatch batch,
+            RuntimeException topLevelException,
+            boolean adjustSequenceNumbers
     ) {
         failBatch(batch, topLevelException, batchIndex -> topLevelException, adjustSequenceNumbers);
     }
 
     private void failBatch(
-        ProducerBatch batch,
-        RuntimeException topLevelException,
-        Function<Integer, RuntimeException> recordExceptions,
-        boolean adjustSequenceNumbers
+            ProducerBatch batch,
+            RuntimeException topLevelException,
+            Function<Integer, RuntimeException> recordExceptions,
+            boolean adjustSequenceNumbers
     ) {
         if (transactionManager != null) {
             transactionManager.handleFailedBatch(batch, topLevelException, adjustSequenceNumbers);
@@ -767,25 +780,32 @@ public class Sender implements Runnable {
      */
     private boolean canRetry(ProducerBatch batch, ProduceResponse.PartitionResponse response, long now) {
         return !batch.hasReachedDeliveryTimeout(accumulator.getDeliveryTimeoutMs(), now) &&
-            batch.attempts() < this.retries &&
-            !batch.isDone() &&
-            (transactionManager == null ?
-                    response.error.exception() instanceof RetriableException :
-                    transactionManager.canRetry(response, batch));
+                batch.attempts() < this.retries &&
+                !batch.isDone() &&
+                (transactionManager == null ?
+                        response.error.exception() instanceof RetriableException :
+                        transactionManager.canRetry(response, batch));
     }
 
     /**
      * Transfer the record batches into a list of produce requests on a per-node basis
      */
     private void sendProduceRequests(Map<Integer, List<ProducerBatch>> collated, long now) {
+        // 1 遍历需要哪些 ProducerBatch 发送哪些 broker 节点
         for (Map.Entry<Integer, List<ProducerBatch>> entry : collated.entrySet())
+            // 2 执行发送
             sendProduceRequest(now, entry.getKey(), acks, requestTimeoutMs, entry.getValue());
     }
 
     /**
      * Create a produce request from the given record batches
      */
-    private void sendProduceRequest(long now, int destination, short acks, int timeout, List<ProducerBatch> batches) {
+    private void sendProduceRequest(long now,
+                                    // 1 broker id
+                                    int destination,
+                                    short acks, int timeout,
+                                    // 2 往 broker id 发送 ProducerBatch
+                                    List<ProducerBatch> batches) {
         if (batches.isEmpty())
             return;
 
@@ -797,9 +817,14 @@ public class Sender implements Runnable {
             if (batch.magic() < minUsedMagic)
                 minUsedMagic = batch.magic();
         }
+
+        // 3 创建 TopicProduceDataCollection
         ProduceRequestData.TopicProduceDataCollection tpd = new ProduceRequestData.TopicProduceDataCollection();
+        // 4 遍历 ProducerBatch
         for (ProducerBatch batch : batches) {
+            // 4.1 获取 ProducerBatch 对应的 TopicPartition
             TopicPartition tp = batch.topicPartition;
+            // 4.2 获取当前遍历 ProducerBatch 的 record 也即 MemoryRecords
             MemoryRecords records = batch.records();
 
             // down convert if necessary to the minimum magic used. In general, there can be a delay between the time
@@ -811,11 +836,14 @@ public class Sender implements Runnable {
             // which is supporting the new magic version to one which doesn't, then we will need to convert.
             if (!records.hasMatchingMagic(minUsedMagic))
                 records = batch.records().downConvert(minUsedMagic, 0, time).records();
+            // 4.3 判断 TopicProduceDataCollection 是否已经存在对应 Topic 的请求数据集合
+            // 如果没有存在 则创建并添加
             ProduceRequestData.TopicProduceData tpData = tpd.find(tp.topic());
             if (tpData == null) {
                 tpData = new ProduceRequestData.TopicProduceData().setName(tp.topic());
                 tpd.add(tpData);
             }
+            // 4.4 往 Topic 对应的分区容器添加需要发送的数据
             tpData.partitionData().add(new ProduceRequestData.PartitionProduceData()
                     .setIndex(tp.partition())
                     .setRecords(records));
@@ -827,6 +855,7 @@ public class Sender implements Runnable {
             transactionalId = transactionManager.transactionalId();
         }
 
+        // 5 构建 ProduceRequest
         ProduceRequest.Builder requestBuilder = ProduceRequest.forMagic(minUsedMagic,
                 new ProduceRequestData()
                         .setAcks(acks)
@@ -836,8 +865,10 @@ public class Sender implements Runnable {
         RequestCompletionHandler callback = response -> handleProduceResponse(response, recordsByPartition, time.milliseconds());
 
         String nodeId = Integer.toString(destination);
+        // 6 创建 ClientRequest 表示往一个 broker 发送数据
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
+        // 7 发送数据 本质是注册 OP_WRITE 事件
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
@@ -907,7 +938,7 @@ public class Sender implements Runnable {
 
             this.metrics.addMetric(metrics.requestsInFlight, (config, now) -> client.inFlightRequestCount());
             this.metrics.addMetric(metrics.metadataAge,
-                (config, now) -> (now - metadata.lastSuccessfulUpdate()) / 1000.0);
+                    (config, now) -> (now - metadata.lastSuccessfulUpdate()) / 1000.0);
 
             this.batchSplitSensor = metrics.sensor("batch-split-rate");
             this.batchSplitSensor.add(new Meter(metrics.batchSplitRate, metrics.batchSplitTotal));

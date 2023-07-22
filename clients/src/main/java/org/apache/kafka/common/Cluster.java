@@ -50,7 +50,8 @@ public final class Cluster {
 
     /**
      * Create a new cluster with the given id, nodes and partitions
-     * @param nodes The nodes in the cluster
+     *
+     * @param nodes      The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      */
     public Cluster(String clusterId,
@@ -63,7 +64,8 @@ public final class Cluster {
 
     /**
      * Create a new cluster with the given id, nodes and partitions
-     * @param nodes The nodes in the cluster
+     *
+     * @param nodes      The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      */
     public Cluster(String clusterId,
@@ -77,7 +79,8 @@ public final class Cluster {
 
     /**
      * Create a new cluster with the given id, nodes and partitions
-     * @param nodes The nodes in the cluster
+     *
+     * @param nodes      The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      */
     public Cluster(String clusterId,
@@ -92,7 +95,8 @@ public final class Cluster {
 
     /**
      * Create a new cluster with the given id, nodes, partitions and topicIds
-     * @param nodes The nodes in the cluster
+     *
+     * @param nodes      The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      */
     public Cluster(String clusterId,
@@ -106,23 +110,36 @@ public final class Cluster {
         this(clusterId, false, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds);
     }
 
-    private Cluster(String clusterId,
-                    boolean isBootstrapConfigured,
-                    Collection<Node> nodes,
-                    Collection<PartitionInfo> partitions,
-                    Set<String> unauthorizedTopics,
-                    Set<String> invalidTopics,
-                    Set<String> internalTopics,
-                    Node controller,
-                    Map<String, Uuid> topicIds) {
+    private Cluster(
+            // 1 null
+            String clusterId,
+            // 2 true
+            boolean isBootstrapConfigured,
+            // 3 kafka-broker 连接地址
+            Collection<Node> nodes,
+            // 4 new ArrayList<>(0)
+            Collection<PartitionInfo> partitions,
+            // 5 Collections.emptySet()
+            Set<String> unauthorizedTopics,
+            // 6 Collections.emptySet()
+            Set<String> invalidTopics,
+            // 7 Collections.emptySet()
+            Set<String> internalTopics,
+            // 8 null
+            Node controller,
+            // 9 Collections.emptyMap()
+            Map<String, Uuid> topicIds) {
         this.isBootstrapConfigured = isBootstrapConfigured;
+        // 10 创建集群资源对象 ClusterResource
         this.clusterResource = new ClusterResource(clusterId);
         // make a randomized, unmodifiable copy of the nodes
+        // 11 broker 地址随机打乱
         List<Node> copy = new ArrayList<>(nodes);
         Collections.shuffle(copy);
         this.nodes = Collections.unmodifiableList(copy);
 
         // Index the nodes for quick lookup
+        // 12 索引 broker 地址
         Map<Integer, Node> tmpNodesById = new HashMap<>();
         Map<Integer, List<PartitionInfo>> tmpPartitionsByNode = new HashMap<>(nodes.size());
         for (Node node : nodes) {
@@ -136,6 +153,7 @@ public final class Cluster {
         // index the partition infos by topic, topic+partition, and node
         // note that this code is performance sensitive if there are a large number of partitions so we are careful
         // to avoid unnecessary work
+        // 13 nothing to do
         Map<TopicPartition, PartitionInfo> tmpPartitionsByTopicPartition = new HashMap<>(partitions.size());
         Map<String, List<PartitionInfo>> tmpPartitionsByTopic = new HashMap<>();
         for (PartitionInfo p : partitions) {
@@ -196,21 +214,33 @@ public final class Cluster {
      */
     public static Cluster empty() {
         return new Cluster(null, new ArrayList<>(0), new ArrayList<>(0), Collections.emptySet(),
-            Collections.emptySet(), null);
+                Collections.emptySet(), null);
     }
 
     /**
      * Create a "bootstrap" cluster using the given list of host/ports
+     *
      * @param addresses The addresses
      * @return A cluster for these hosts/ports
      */
     public static Cluster bootstrap(List<InetSocketAddress> addresses) {
+        // 1 解析 broker 地址
         List<Node> nodes = new ArrayList<>();
         int nodeId = -1;
         for (InetSocketAddress address : addresses)
             nodes.add(new Node(nodeId--, address.getHostString(), address.getPort()));
-        return new Cluster(null, true, nodes, new ArrayList<>(0),
-            Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap());
+        // 2 创建连接 kafka 集群对象 Cluster
+        return new Cluster(
+                null,
+                true,
+                nodes,
+                new ArrayList<>(0),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                Collections.emptySet(),
+                null,
+                Collections.emptyMap()
+        );
     }
 
     /**
@@ -233,6 +263,7 @@ public final class Cluster {
 
     /**
      * Get the node by the node id (or null if the node is not online or does not exist)
+     *
      * @param id The id of the node
      * @return The node, or null if the node is not online or does not exist
      */
@@ -242,6 +273,7 @@ public final class Cluster {
 
     /**
      * Get the node by node id if the replica for the given partition is online
+     *
      * @param partition
      * @param id
      * @return the node
@@ -257,6 +289,7 @@ public final class Cluster {
 
     /**
      * Get the current leader for the given topic-partition
+     *
      * @param topicPartition The topic and partition we want to know the leader for
      * @return The node that is the leader for this topic-partition, or null if there is currently no leader
      */
@@ -270,6 +303,7 @@ public final class Cluster {
 
     /**
      * Get the metadata for the specified partition
+     *
      * @param topicPartition The topic and partition to fetch info for
      * @return The metadata about the given topic and partition, or null if none is found
      */
@@ -279,6 +313,7 @@ public final class Cluster {
 
     /**
      * Get the list of partitions for this topic
+     *
      * @param topic The topic name
      * @return A list of partitions
      */
@@ -288,6 +323,7 @@ public final class Cluster {
 
     /**
      * Get the number of partitions for the given topic.
+     *
      * @param topic The topic to get the number of partitions for
      * @return The number of partitions or null if there is no corresponding metadata
      */
@@ -298,6 +334,7 @@ public final class Cluster {
 
     /**
      * Get the list of available partitions for this topic
+     *
      * @param topic The topic name
      * @return A list of partitions
      */
@@ -307,6 +344,7 @@ public final class Cluster {
 
     /**
      * Get the list of partitions whose leader is this node
+     *
      * @param nodeId The node id
      * @return A list of partitions
      */
@@ -316,6 +354,7 @@ public final class Cluster {
 
     /**
      * Get all topics.
+     *
      * @return a set of all topics
      */
     public Set<String> topics() {
@@ -357,7 +396,7 @@ public final class Cluster {
     @Override
     public String toString() {
         return "Cluster(id = " + clusterResource.clusterId() + ", nodes = " + this.nodes +
-            ", partitions = " + this.partitionsByTopicPartition.values() + ", controller = " + controller + ")";
+                ", partitions = " + this.partitionsByTopicPartition.values() + ", controller = " + controller + ")";
     }
 
     @Override

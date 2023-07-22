@@ -29,6 +29,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.common.utils.ProducerIdAndEpoch;
@@ -88,17 +89,17 @@ public final class RecordAccumulator {
     /**
      * Create a new record accumulator
      *
-     * @param logContext The log context used for logging
-     * @param batchSize The size to use when allocating {@link MemoryRecords} instances
-     * @param compression The compression codec for the records
-     * @param lingerMs An artificial delay time to add before declaring a records instance that isn't full ready for
-     *        sending. This allows time for more records to arrive. Setting a non-zero lingerMs will trade off some
-     *        latency for potentially better throughput due to more batching (and hence fewer, larger requests).
-     * @param retryBackoffMs An artificial delay time to retry the produce request upon receiving an error. This avoids
-     *        exhausting all retries in a short period of time.
-     * @param metrics The metrics
-     * @param time The time instance to use
-     * @param apiVersions Request API versions for current connected brokers
+     * @param logContext         The log context used for logging
+     * @param batchSize          The size to use when allocating {@link MemoryRecords} instances
+     * @param compression        The compression codec for the records
+     * @param lingerMs           An artificial delay time to add before declaring a records instance that isn't full ready for
+     *                           sending. This allows time for more records to arrive. Setting a non-zero lingerMs will trade off some
+     *                           latency for potentially better throughput due to more batching (and hence fewer, larger requests).
+     * @param retryBackoffMs     An artificial delay time to retry the produce request upon receiving an error. This avoids
+     *                           exhausting all retries in a short period of time.
+     * @param metrics            The metrics
+     * @param time               The time instance to use
+     * @param apiVersions        Request API versions for current connected brokers
      * @param transactionManager The shared transaction state object which tracks producer IDs, epochs, and sequence
      *                           numbers per partition.
      */
@@ -119,17 +120,27 @@ public final class RecordAccumulator {
         this.closed = false;
         this.flushesInProgress = new AtomicInteger(0);
         this.appendsInProgress = new AtomicInteger(0);
+        // 1 批次大小 默认 16KB
         this.batchSize = batchSize;
+        // 2 消息压缩类型 默认 none
         this.compression = compression;
+        // 3 发送批次间隔 默认 0
         this.lingerMs = lingerMs;
+        // 4 重试发送间隔 默认 100ms
         this.retryBackoffMs = retryBackoffMs;
+        // 5 执行 send() 最大等待响应结果 默认 2min
         this.deliveryTimeoutMs = deliveryTimeoutMs;
+        // 6 缓存批次数据容器
         this.batches = new CopyOnWriteMap<>();
+        // 7 内存缓存池 默认大小 32MB
         this.free = bufferPool;
+        // 8 缓存不完整批次大小容器
         this.incomplete = new IncompleteBatches();
         this.muted = new HashSet<>();
         this.time = time;
+        // 9 Api 版本器
         this.apiVersions = apiVersions;
+        // 10 事务管理器
         this.transactionManager = transactionManager;
         registerMetrics(metrics, metricGrpName);
     }
@@ -166,16 +177,16 @@ public final class RecordAccumulator {
      * The append result will contain the future metadata, and flag for whether the appended batch is full or a new batch is created
      * <p>
      *
-     * @param tp The topic/partition to which this record is being sent
-     * @param timestamp The timestamp of the record
-     * @param key The key for the record
-     * @param value The value for the record
-     * @param headers the Headers for the record
-     * @param callback The user-supplied callback to execute when the request is complete
-     * @param maxTimeToBlock The maximum time in milliseconds to block for buffer memory to be available
+     * @param tp              The topic/partition to which this record is being sent
+     * @param timestamp       The timestamp of the record
+     * @param key             The key for the record
+     * @param value           The value for the record
+     * @param headers         the Headers for the record
+     * @param callback        The user-supplied callback to execute when the request is complete
+     * @param maxTimeToBlock  The maximum time in milliseconds to block for buffer memory to be available
      * @param abortOnNewBatch A boolean that indicates returning before a new batch is created and
      *                        running the partitioner's onNewBatch method before trying to append again
-     * @param nowMs The current time, in milliseconds
+     * @param nowMs           The current time, in milliseconds
      */
     public RecordAppendResult append(TopicPartition tp,
                                      long timestamp,
@@ -193,10 +204,14 @@ public final class RecordAccumulator {
         if (headers == null) headers = Record.EMPTY_HEADERS;
         try {
             // check if we have an in-progress batch
+            // 1 根据 TopicPartition 从 batches 获取对应的 Deque<ProducerBatch>
+            // 没有则创建
             Deque<ProducerBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
                 if (closed)
                     throw new KafkaException("Producer closed while send in progress");
+                // 2 尝试将 record 添加到 dp
+                // 第一次从 Deque<ProducerBatch> 弹出 ProducerBatch 为 null 返回也即为 null
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null)
                     return appendResult;
@@ -209,8 +224,11 @@ public final class RecordAccumulator {
             }
 
             byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
+            // 3 计算当前 record 的大小
+            // 如果 record 小于 16KB 返回 16KB 返回返回具体的 record 大小
             int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, tp.topic(), tp.partition(), maxTimeToBlock);
+            // 4 从 BufferPool 申请 record 大小 ByteBuffer
             buffer = free.allocate(size, maxTimeToBlock);
 
             // Update the current time in case the buffer allocation blocked above.
@@ -219,18 +237,23 @@ public final class RecordAccumulator {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new KafkaException("Producer closed while send in progress");
-
+                // 5 尝试将 record 添加到 dp
+                // 第一次从 Deque<ProducerBatch> 弹出 ProducerBatch 为 null 返回也即为 null
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     return appendResult;
                 }
 
+                // 6 将申请到的 ByteBuffer 封装成 MemoryRecordsBuilder
                 MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, maxUsableMagic);
+                // 7 创建 ProducerBatch
                 ProducerBatch batch = new ProducerBatch(tp, recordsBuilder, nowMs);
-                FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
-                        callback, nowMs));
+                // 8 将 record 信息最终封装成 ProducerBatch
+                FutureRecordMetadata future = Objects.requireNonNull(
+                        batch.tryAppend(timestamp, key, value, headers, callback, nowMs));
 
+                // 9 将 ProducerBatch 添加到 Deque<ProducerBatch> 尾部
                 dq.addLast(batch);
                 incomplete.add(batch);
 
@@ -248,24 +271,29 @@ public final class RecordAccumulator {
     private MemoryRecordsBuilder recordsBuilder(ByteBuffer buffer, byte maxUsableMagic) {
         if (transactionManager != null && maxUsableMagic < RecordBatch.MAGIC_VALUE_V2) {
             throw new UnsupportedVersionException("Attempting to use idempotence with a broker which does not " +
-                "support the required message format (v2). The broker must be version 0.11 or later.");
+                    "support the required message format (v2). The broker must be version 0.11 or later.");
         }
         return MemoryRecords.builder(buffer, maxUsableMagic, compression, TimestampType.CREATE_TIME, 0L);
     }
 
     /**
-     *  Try to append to a ProducerBatch.
-     *
-     *  If it is full, we return null and a new batch is created. We also close the batch for record appends to free up
-     *  resources like compression buffers. The batch will be fully closed (ie. the record batch headers will be written
-     *  and memory records built) in one of the following cases (whichever comes first): right before send,
-     *  if it is expired, or when the producer is closed.
+     * Try to append to a ProducerBatch.
+     * <p>
+     * If it is full, we return null and a new batch is created. We also close the batch for record appends to free up
+     * resources like compression buffers. The batch will be fully closed (ie. the record batch headers will be written
+     * and memory records built) in one of the following cases (whichever comes first): right before send,
+     * if it is expired, or when the producer is closed.
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Header[] headers,
                                          Callback callback, Deque<ProducerBatch> deque, long nowMs) {
+        // 1 从 Deque 弹出最后一个 ProducerBatch
         ProducerBatch last = deque.peekLast();
+        // 2 如果不为空说明上一次 record 添加到 ProducerBatch
         if (last != null) {
+            // 3 判断 ProducerBatch 是否再可以容纳 record
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, headers, callback, nowMs);
+            // 4 future 为空说明 ProducerBatch 不能容纳 record
+            // 关闭当前 ProducerBatch DataOutputStream 表示当前 ProducerBatch 批次满啦
             if (future == null)
                 last.closeForRecordAppends();
             else
@@ -283,13 +311,13 @@ public final class RecordAccumulator {
     }
 
     public void maybeUpdateNextBatchExpiryTime(ProducerBatch batch) {
-        if (batch.createdMs + deliveryTimeoutMs  > 0) {
+        if (batch.createdMs + deliveryTimeoutMs > 0) {
             // the non-negative check is to guard us against potential overflow due to setting
             // a large value for deliveryTimeoutMs
             nextBatchExpiryTimeMs = Math.min(nextBatchExpiryTimeMs, batch.createdMs + deliveryTimeoutMs);
         } else {
             log.warn("Skipping next batch expiry time update due to addition overflow: "
-                + "batch.createMs={}, deliveryTimeoutMs={}", batch.createdMs, deliveryTimeoutMs);
+                    + "batch.createMs={}, deliveryTimeoutMs={}", batch.createdMs, deliveryTimeoutMs);
         }
     }
 
@@ -339,6 +367,7 @@ public final class RecordAccumulator {
 
     /**
      * Split the big batch that has been rejected and reenqueue the split batches in to the accumulator.
+     *
      * @return the number of split batches.
      */
     public int splitAndReenqueue(ProducerBatch bigBatch) {
@@ -346,7 +375,7 @@ public final class RecordAccumulator {
         // is bigger. There are several different ways to do the reset. We chose the most conservative one to ensure
         // the split doesn't happen too often.
         CompressionRatioEstimator.setEstimation(bigBatch.topicPartition.topic(), compression,
-                                                Math.max(1.0f, (float) bigBatch.compressionRatio()));
+                Math.max(1.0f, (float) bigBatch.compressionRatio()));
         Deque<ProducerBatch> dq = bigBatch.split(this.batchSize);
         int numSplitBatches = dq.size();
         Deque<ProducerBatch> partitionDequeue = getOrCreateDeque(bigBatch.topicPartition);
@@ -381,11 +410,11 @@ public final class RecordAccumulator {
         // When we are requeing and have enabled idempotence, the reenqueued batch must always have a sequence.
         if (batch.baseSequence() == RecordBatch.NO_SEQUENCE)
             throw new IllegalStateException("Trying to re-enqueue a batch which doesn't have a sequence even " +
-                "though idempotency is enabled.");
+                    "though idempotency is enabled.");
 
         if (transactionManager.nextBatchBySequence(batch.topicPartition) == null)
             throw new IllegalStateException("We are re-enqueueing a batch which is not tracked as part of the in flight " +
-                "requests. batch.topicPartition: " + batch.topicPartition + "; batch.baseSequence: " + batch.baseSequence());
+                    "requests. batch.topicPartition: " + batch.topicPartition + "; batch.baseSequence: " + batch.baseSequence());
 
         ProducerBatch firstBatchInQueue = deque.peekFirst();
         if (firstBatchInQueue != null && firstBatchInQueue.hasSequence() && firstBatchInQueue.baseSequence() < batch.baseSequence()) {
@@ -402,7 +431,7 @@ public final class RecordAccumulator {
                 orderedBatches.add(deque.pollFirst());
 
             log.debug("Reordered incoming batch with sequence {} for partition {}. It was placed in the queue at " +
-                "position {}", batch.baseSequence(), batch.topicPartition, orderedBatches.size());
+                    "position {}", batch.baseSequence(), batch.topicPartition, orderedBatches.size());
             // Either we have reached a point where there are batches without a sequence (ie. never been drained
             // and are hence in order by default), or the batch at the front of the queue has a sequence greater
             // than the incoming batch. This is the right place to add the incoming batch.
@@ -441,19 +470,28 @@ public final class RecordAccumulator {
      * </ol>
      */
     public ReadyCheckResult ready(Cluster cluster, long nowMs) {
+        // 1 计算发送数据给哪些 broker 节点
         Set<Node> readyNodes = new HashSet<>();
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
 
+        // 2 判断内存缓存池是否消耗完
         boolean exhausted = this.free.queued() > 0;
+        // 3 判断哪些批次可以发送
+        // 3.1 遍历 batches
         for (Map.Entry<TopicPartition, Deque<ProducerBatch>> entry : this.batches.entrySet()) {
+            // 3.2 遍历 value = Deque<ProducerBatch>
             Deque<ProducerBatch> deque = entry.getValue();
             synchronized (deque) {
                 // When producing to a large number of partitions, this path is hot and deques are often empty.
                 // We check whether a batch exists first to avoid the more expensive checks whenever possible.
+                // 3.3 弹出第一个 ProducerBatch
+                // 如果第一个 ProducerBatch 为 null 说明当前 Deque<ProducerBatch> 不存在批次
                 ProducerBatch batch = deque.peekFirst();
                 if (batch != null) {
+                    // 3.4 遍历 key = TopicPartition
                     TopicPartition part = entry.getKey();
+                    // 3.5 获取 TopicPartition 对应的 Leader broker 节点
                     Node leader = cluster.leaderFor(part);
                     if (leader == null) {
                         // This is a partition for which leader is not known, but messages are available to send.
@@ -466,13 +504,15 @@ public final class RecordAccumulator {
                         boolean full = deque.size() > 1 || batch.isFull();
                         boolean expired = waitedTimeMs >= timeToWaitMs;
                         boolean transactionCompleting = transactionManager != null && transactionManager.isCompleting();
+                        // 3.6 判断当前批次 ProducerBatch 是否满啦
                         boolean sendable = full
-                            || expired
-                            || exhausted
-                            || closed
-                            || flushInProgress()
-                            || transactionCompleting;
+                                || expired
+                                || exhausted
+                                || closed
+                                || flushInProgress()
+                                || transactionCompleting;
                         if (sendable && !backingOff) {
+                            // 3.7 说明有 ProducerBatch 需要发送给该 broker 节点
                             readyNodes.add(leader);
                         } else {
                             long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
@@ -485,6 +525,7 @@ public final class RecordAccumulator {
                 }
             }
         }
+        // 4 返回检查哪些批次可以发送结果
         return new ReadyCheckResult(readyNodes, nextReadyCheckDelayMs, unknownLeaderTopics);
     }
 
@@ -530,7 +571,7 @@ public final class RecordAccumulator {
 
             int firstInFlightSequence = transactionManager.firstInFlightSequence(first.topicPartition);
             if (firstInFlightSequence != RecordBatch.NO_SEQUENCE && first.hasSequence()
-                && first.baseSequence() != firstInFlightSequence)
+                    && first.baseSequence() != firstInFlightSequence)
                 // If the queued batch already has an assigned sequence, then it is being retried.
                 // In this case, we wait until the next immediate batch is ready and drain that.
                 // We only move on when the next in line batch is complete (either successfully or due to
@@ -581,7 +622,7 @@ public final class RecordAccumulator {
 
                     boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
                     ProducerIdAndEpoch producerIdAndEpoch =
-                        transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
+                            transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
                     ProducerBatch batch = deque.pollFirst();
                     if (producerIdAndEpoch != null && !batch.hasSequence()) {
                         // If the producer id/epoch of the partition do not match the latest one
@@ -601,8 +642,8 @@ public final class RecordAccumulator {
                         batch.setProducerState(producerIdAndEpoch, transactionManager.sequenceNumber(batch.topicPartition), isTransactional);
                         transactionManager.incrementSequenceNumber(batch.topicPartition, batch.recordCount);
                         log.debug("Assigned producerId {} and producerEpoch {} to batch with base sequence " +
-                                "{} being sent to partition {}", producerIdAndEpoch.producerId,
-                            producerIdAndEpoch.epoch, batch.baseSequence(), tp);
+                                        "{} being sent to partition {}", producerIdAndEpoch.producerId,
+                                producerIdAndEpoch.epoch, batch.baseSequence(), tp);
 
                         transactionManager.addInFlightBatch(batch);
                     }
@@ -622,17 +663,20 @@ public final class RecordAccumulator {
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
      *
      * @param cluster The current cluster metadata
-     * @param nodes The list of node to drain
+     * @param nodes   The list of node to drain
      * @param maxSize The maximum number of bytes to drain
-     * @param now The current unix time in milliseconds
+     * @param now     The current unix time in milliseconds
      * @return A list of {@link ProducerBatch} for each node specified with total size less than the requested maxSize.
      */
     public Map<Integer, List<ProducerBatch>> drain(Cluster cluster, Set<Node> nodes, int maxSize, long now) {
         if (nodes.isEmpty())
             return Collections.emptyMap();
 
+        // 1 哪些 ProducerBatch 发送给哪些 broker 容器
         Map<Integer, List<ProducerBatch>> batches = new HashMap<>();
+        // 2 遍历 broker 节点
         for (Node node : nodes) {
+            // 3 获取哪些 ProducerBatch 发送给 broker 节点
             List<ProducerBatch> ready = drainBatchesForOneNode(cluster, node, maxSize, now);
             batches.put(node.id(), ready);
         }
@@ -685,7 +729,7 @@ public final class RecordAccumulator {
 
     /**
      * Are there any threads currently waiting on a flush?
-     *
+     * <p>
      * package private for test
      */
     boolean flushInProgress() {

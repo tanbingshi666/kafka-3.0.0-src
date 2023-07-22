@@ -32,10 +32,13 @@ final class InFlightRequests {
 
     private final int maxInFlightRequestsPerConnection;
     private final Map<String, Deque<NetworkClient.InFlightRequest>> requests = new HashMap<>();
-    /** Thread safe total number of in flight requests. */
+    /**
+     * Thread safe total number of in flight requests.
+     */
     private final AtomicInteger inFlightRequestCount = new AtomicInteger(0);
 
     public InFlightRequests(int maxInFlightRequestsPerConnection) {
+        // 默认 5
         this.maxInFlightRequestsPerConnection = maxInFlightRequestsPerConnection;
     }
 
@@ -43,12 +46,15 @@ final class InFlightRequests {
      * Add the given request to the queue for the connection it was directed to
      */
     public void add(NetworkClient.InFlightRequest request) {
+        // 1 获取 broker id
         String destination = request.destination;
+        // 2 获取 broker id 对应的待发送集合
         Deque<NetworkClient.InFlightRequest> reqs = this.requests.get(destination);
         if (reqs == null) {
             reqs = new ArrayDeque<>();
             this.requests.put(destination, reqs);
         }
+        // 3 添加待发送 InFlightRequest
         reqs.addFirst(request);
         inFlightRequestCount.incrementAndGet();
     }
@@ -74,6 +80,7 @@ final class InFlightRequests {
 
     /**
      * Get the last request we sent to the given node (but don't remove it from the queue)
+     *
      * @param node The node id
      */
     public NetworkClient.InFlightRequest lastSent(String node) {
@@ -82,6 +89,7 @@ final class InFlightRequests {
 
     /**
      * Complete the last request that was sent to a particular node.
+     *
      * @param node The node the request was sent to
      * @return The request
      */
@@ -100,11 +108,12 @@ final class InFlightRequests {
     public boolean canSendMore(String node) {
         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
         return queue == null || queue.isEmpty() ||
-               (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
+                (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
     }
 
     /**
      * Return the number of in-flight requests directed at the given node
+     *
      * @param node The node
      * @return The request count.
      */
