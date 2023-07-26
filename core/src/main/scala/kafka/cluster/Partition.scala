@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -45,7 +45,9 @@ import scala.jdk.CollectionConverters._
 
 trait IsrChangeListener {
   def markExpand(): Unit
+
   def markShrink(): Unit
+
   def markFailed(): Unit
 }
 
@@ -113,7 +115,9 @@ object Partition extends KafkaMetricsGroup {
 
 sealed trait AssignmentState {
   def replicas: Seq[Int]
+
   def replicationFactor: Int = replicas.size
+
   def isAddingReplica(brokerId: Int): Boolean = false
 }
 
@@ -122,11 +126,11 @@ case class OngoingReassignmentState(addingReplicas: Seq[Int],
                                     replicas: Seq[Int]) extends AssignmentState {
 
   override def replicationFactor: Int = replicas.diff(addingReplicas).size // keep the size of the original replicas
+
   override def isAddingReplica(replicaId: Int): Boolean = addingReplicas.contains(replicaId)
 }
 
 case class SimpleAssignmentState(replicas: Seq[Int]) extends AssignmentState
-
 
 
 sealed trait IsrState {
@@ -151,9 +155,9 @@ sealed trait IsrState {
 }
 
 case class PendingExpandIsr(
-  isr: Set[Int],
-  newInSyncReplicaId: Int
-) extends IsrState {
+                             isr: Set[Int],
+                             newInSyncReplicaId: Int
+                           ) extends IsrState {
   val maximalIsr = isr + newInSyncReplicaId
   val isInflight = true
 
@@ -165,9 +169,9 @@ case class PendingExpandIsr(
 }
 
 case class PendingShrinkIsr(
-  isr: Set[Int],
-  outOfSyncReplicaIds: Set[Int]
-) extends IsrState  {
+                             isr: Set[Int],
+                             outOfSyncReplicaIds: Set[Int]
+                           ) extends IsrState {
   val maximalIsr = isr
   val isInflight = true
 
@@ -179,8 +183,8 @@ case class PendingShrinkIsr(
 }
 
 case class CommittedIsr(
-  isr: Set[Int]
-) extends IsrState {
+                         isr: Set[Int]
+                       ) extends IsrState {
   val maximalIsr = isr
   val isInflight = false
 
@@ -196,18 +200,18 @@ case class CommittedIsr(
  *
  * Concurrency notes:
  * 1) Partition is thread-safe. Operations on partitions may be invoked concurrently from different
- *    request handler threads
+ * request handler threads
  * 2) ISR updates are synchronized using a read-write lock. Read lock is used to check if an update
- *    is required to avoid acquiring write lock in the common case of replica fetch when no update
- *    is performed. ISR update condition is checked a second time under write lock before performing
- *    the update
+ * is required to avoid acquiring write lock in the common case of replica fetch when no update
+ * is performed. ISR update condition is checked a second time under write lock before performing
+ * the update
  * 3) Various other operations like leader changes are processed while holding the ISR write lock.
- *    This can introduce delays in produce and replica fetch requests, but these operations are typically
- *    infrequent.
+ * This can introduce delays in produce and replica fetch requests, but these operations are typically
+ * infrequent.
  * 4) HW updates are synchronized using ISR read lock. @Log lock is acquired during the update with
- *    locking order Partition lock -> Log lock.
+ * locking order Partition lock -> Log lock.
  * 5) lock is used to prevent the follower replica from being updated while ReplicaAlterDirThread is
- *    executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
+ * executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
  */
 class Partition(val topicPartition: TopicPartition,
                 val replicaLagTimeMaxMs: Long,
@@ -221,6 +225,7 @@ class Partition(val topicPartition: TopicPartition,
                 alterIsrManager: AlterIsrManager) extends Logging with KafkaMetricsGroup {
 
   def topic: String = topicPartition.topic
+
   def partitionId: Int = topicPartition.partition
 
   private val stateChangeLogger = new StateChangeLogger(localBrokerId, inControllerContext = false, None)
@@ -266,9 +271,13 @@ class Partition(val topicPartition: TopicPartition,
 
   def isUnderReplicated: Boolean = isLeader && (assignmentState.replicationFactor - isrState.isr.size) > 0
 
-  def isUnderMinIsr: Boolean = leaderLogIfLocal.exists { isrState.isr.size < _.config.minInSyncReplicas }
+  def isUnderMinIsr: Boolean = leaderLogIfLocal.exists {
+    isrState.isr.size < _.config.minInSyncReplicas
+  }
 
-  def isAtMinIsr: Boolean = leaderLogIfLocal.exists { isrState.isr.size == _.config.minInSyncReplicas }
+  def isAtMinIsr: Boolean = leaderLogIfLocal.exists {
+    isrState.isr.size == _.config.minInSyncReplicas
+  }
 
   def isReassigning: Boolean = assignmentState.isInstanceOf[OngoingReassignmentState]
 
@@ -279,13 +288,13 @@ class Partition(val topicPartition: TopicPartition,
   def inSyncReplicaIds: Set[Int] = isrState.isr
 
   /**
-    * Create the future replica if 1) the current replica is not in the given log directory and 2) the future replica
-    * does not exist. This method assumes that the current replica has already been created.
-    *
-    * @param logDir log directory
-    * @param highWatermarkCheckpoints Checkpoint to load initial high watermark from
-    * @return true iff the future replica is created
-    */
+   * Create the future replica if 1) the current replica is not in the given log directory and 2) the future replica
+   * does not exist. This method assumes that the current replica has already been created.
+   *
+   * @param logDir                   log directory
+   * @param highWatermarkCheckpoints Checkpoint to load initial high watermark from
+   * @return true iff the future replica is created
+   */
   def maybeCreateFutureReplica(logDir: String, highWatermarkCheckpoints: OffsetCheckpoints): Boolean = {
     // The writeLock is needed to make sure that while the caller checks the log directory of the
     // current replica and the existence of the future replica, no other thread can update the log directory of the
@@ -591,9 +600,9 @@ class Partition(val topicPartition: TopicPartition,
   }
 
   /**
-   *  Make the local replica the follower by setting the new leader and ISR to empty
-   *  If the leader replica id does not change and the new epoch is equal or one
-   *  greater (that is, no updates have been missed), return false to indicate to the
+   * Make the local replica the follower by setting the new leader and ISR to empty
+   * If the leader replica id does not change and the new epoch is equal or one
+   * greater (that is, no updates have been missed), return false to indicate to the
    * replica manager that state is already correct and the become-follower steps can be skipped
    */
   def makeFollower(partitionState: LeaderAndIsrPartitionState,
@@ -703,13 +712,13 @@ class Partition(val topicPartition: TopicPartition,
    *
    * Note: public visibility for tests.
    *
-   * @param assignment An ordered sequence of all the broker ids that were assigned to this
-   *                   topic partition
-   * @param isr The set of broker ids that are known to be insync with the leader
-   * @param addingReplicas An ordered sequence of all broker ids that will be added to the
-    *                       assignment
+   * @param assignment       An ordered sequence of all the broker ids that were assigned to this
+   *                         topic partition
+   * @param isr              The set of broker ids that are known to be insync with the leader
+   * @param addingReplicas   An ordered sequence of all broker ids that will be added to the
+   *                         assignment
    * @param removingReplicas An ordered sequence of all broker ids that will be removed from
-    *                         the assignment
+   *                         the assignment
    */
   def updateAssignmentAndIsr(assignment: Seq[Int],
                              isr: Set[Int],
@@ -796,7 +805,9 @@ class Partition(val topicPartition: TopicPartition,
           val curInSyncReplicaObjects = (curMaximalIsr - localBrokerId).flatMap(getReplica)
           val replicaInfo = curInSyncReplicaObjects.map(replica => (replica.brokerId, replica.logEndOffset))
           val localLogInfo = (localBrokerId, localLogOrException.logEndOffset)
-          val (ackedReplicas, awaitingReplicas) = (replicaInfo + localLogInfo).partition { _._2 >= requiredOffset}
+          val (ackedReplicas, awaitingReplicas) = (replicaInfo + localLogInfo).partition {
+            _._2 >= requiredOffset
+          }
 
           trace(s"Progress awaiting ISR acks for offset $requiredOffset: " +
             s"acked: ${ackedReplicas.map(logEndOffsetString)}, " +
@@ -922,9 +933,9 @@ class Partition(val topicPartition: TopicPartition,
           }.mkString(" ")
           val newIsrLog = (isrState.isr -- outOfSyncReplicaIds).mkString(",")
           info(s"Shrinking ISR from ${isrState.isr.mkString(",")} to $newIsrLog. " +
-               s"Leader: (highWatermark: ${leaderLog.highWatermark}, " +
-               s"endOffset: ${leaderLog.logEndOffset}). " +
-               s"Out of sync replicas: $outOfSyncReplicaLog.")
+            s"Leader: (highWatermark: ${leaderLog.highWatermark}, " +
+            s"endOffset: ${leaderLog.logEndOffset}). " +
+            s"Out of sync replicas: $outOfSyncReplicaLog.")
 
           shrinkIsr(outOfSyncReplicaIds)
 
@@ -959,15 +970,15 @@ class Partition(val topicPartition: TopicPartition,
    * If the follower already has the same leo as the leader, it will not be considered as out-of-sync,
    * otherwise there are two cases that will be handled here -
    * 1. Stuck followers: If the leo of the replica hasn't been updated for maxLagMs ms,
-   *                     the follower is stuck and should be removed from the ISR
+   * the follower is stuck and should be removed from the ISR
    * 2. Slow followers: If the replica has not read up to the leo within the last maxLagMs ms,
-   *                    then the follower is lagging and should be removed from the ISR
+   * then the follower is lagging and should be removed from the ISR
    * Both these cases are handled by checking the lastCaughtUpTimeMs which represents
    * the last time when the replica was fully caught up. If either of the above conditions
    * is violated, that replica is considered to be out of sync
    *
    * If an ISR update is in-flight, we will return an empty set here
-   **/
+   * */
   def getOutOfSyncReplicas(maxLagMs: Long): Set[Int] = {
     val current = isrState
     if (!current.isInflight) {
@@ -987,7 +998,9 @@ class Partition(val topicPartition: TopicPartition,
       inReadLock(leaderIsrUpdateLock) {
         // Note the replica may be undefined if it is removed by a non-ReplicaAlterLogDirsThread before
         // this method is called
-        futureLog.map { _.appendAsFollower(records) }
+        futureLog.map {
+          _.appendAsFollower(records)
+        }
       }
     } else {
       // The lock is needed to prevent the follower replica from being updated while ReplicaAlterDirThread
@@ -1006,7 +1019,7 @@ class Partition(val topicPartition: TopicPartition,
         val log = if (isFuture) futureLocalLogOrException else localLogOrException
         val logEndOffset = log.logEndOffset
         if (logEndOffset == log.logStartOffset &&
-            e.firstOffset < logEndOffset && e.lastOffset >= logEndOffset) {
+          e.firstOffset < logEndOffset && e.lastOffset >= logEndOffset) {
           // This may happen if the log start offset on the leader (or current replica) falls in
           // the middle of the batch due to delete records request and the follower tries to
           // fetch its first offset from the leader.
@@ -1016,7 +1029,7 @@ class Partition(val topicPartition: TopicPartition,
           // to checkpoint the new recovery point before we append
           val replicaName = if (isFuture) "future replica" else "follower"
           info(s"Unexpected offset in append to $topicPartition. First offset ${e.firstOffset} is less than log start offset ${log.logStartOffset}." +
-               s" Since this is the first record to be appended to the $replicaName's log, will start the log from offset ${e.firstOffset}.")
+            s" Since this is the first record to be appended to the $replicaName's log, will start the log from offset ${e.firstOffset}.")
           truncateFullyAndStartAt(e.firstOffset, isFuture)
           doAppendRecordsToFollowerOrFutureReplica(records, isFuture)
         } else
@@ -1038,10 +1051,12 @@ class Partition(val topicPartition: TopicPartition,
               s"is insufficient to satisfy the min.isr requirement of $minIsr for partition $topicPartition")
           }
 
+          // 1 调用 Leader 追加写数据
           val info = leaderLog.appendAsLeader(records, leaderEpoch = this.leaderEpoch, origin,
             interBrokerProtocolVersion, requestLocal)
 
           // we may need to increment high watermark since ISR could be down to 1
+          // 2 处理 HW
           (info, maybeIncrementLeaderHW(leaderLog))
 
         case None =>
@@ -1244,11 +1259,11 @@ class Partition(val topicPartition: TopicPartition,
   }
 
   /**
-    * Truncate the local log of this partition to the specified offset and checkpoint the recovery point to this offset
-    *
-    * @param offset offset to be used for truncation
-    * @param isFuture True iff the truncation should be performed on the future log of this partition
-    */
+   * Truncate the local log of this partition to the specified offset and checkpoint the recovery point to this offset
+   *
+   * @param offset   offset to be used for truncation
+   * @param isFuture True iff the truncation should be performed on the future log of this partition
+   */
   def truncateTo(offset: Long, isFuture: Boolean): Unit = {
     // The read lock is needed to prevent the follower replica from being truncated while ReplicaAlterDirThread
     // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
@@ -1258,11 +1273,11 @@ class Partition(val topicPartition: TopicPartition,
   }
 
   /**
-    * Delete all data in the local log of this partition and start the log at the new offset
-    *
-    * @param newOffset The new offset to start the log with
-    * @param isFuture True iff the truncation should be performed on the future log of this partition
-    */
+   * Delete all data in the local log of this partition and start the log at the new offset
+   *
+   * @param newOffset The new offset to start the log with
+   * @param isFuture  True iff the truncation should be performed on the future log of this partition
+   */
   def truncateFullyAndStartAt(newOffset: Long, isFuture: Boolean): Unit = {
     // The read lock is needed to prevent the follower replica from being truncated while ReplicaAlterDirThread
     // is executing maybeReplaceCurrentWithFutureReplica() to replace follower replica with the future replica.
@@ -1274,10 +1289,9 @@ class Partition(val topicPartition: TopicPartition,
   /**
    * Find the (exclusive) last offset of the largest epoch less than or equal to the requested epoch.
    *
-   * @param currentLeaderEpoch The expected epoch of the current leader (if known)
-   * @param leaderEpoch Requested leader epoch
+   * @param currentLeaderEpoch  The expected epoch of the current leader (if known)
+   * @param leaderEpoch         Requested leader epoch
    * @param fetchOnlyFromLeader Whether or not to require servicing only from the leader
-   *
    * @return The requested leader epoch and the end offset of this leader epoch, or if the requested
    *         leader epoch is unknown, the leader epoch less than the requested leader epoch and the end offset
    *         of this leader epoch. The end offset of a leader epoch is defined as the start

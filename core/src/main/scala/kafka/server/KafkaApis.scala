@@ -541,9 +541,12 @@ class KafkaApis(
    * Handle a produce request
    */
   def handleProduceRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
+    // 1 读取 kafka producer 发送过来的数据
     val produceRequest = request.body[ProduceRequest]
+    // 2 读取 kafka producer 发送过来的数据长度大小
     val requestSize = request.sizeInBytes
 
+    // 3 判断 kafka producer 是否开启事务
     if (RequestUtils.hasTransactionalRecords(produceRequest)) {
       val isAuthorizedTransactional = produceRequest.transactionalId != null &&
         authHelper.authorize(request.context, WRITE, TRANSACTIONAL_ID, produceRequest.transactionalId)
@@ -553,19 +556,29 @@ class KafkaApis(
       }
     }
 
+    // 4 检验 kafka producer 发送过来的数据是否合法
+    // 4.1 未认证 TopicPartition 响应结果
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
+    // 4.2 不存在 TopicPartition 响应结果
     val nonExistingTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
+    // 4.3 非法 TopicPartition 响应结果
     val invalidRequestResponses = mutable.Map[TopicPartition, PartitionResponse]()
+    // 4.4 合法 TopicPartition 数据
     val authorizedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
+
     // cache the result to avoid redundant authorization calls
+    // 5 检测合法 Topic
     val authorizedTopics = authHelper.filterByAuthorized(request.context, WRITE, TOPIC,
       produceRequest.data().topicData().asScala)(_.name())
 
+    // 6 遍历 kafka producer request topic 数据
     produceRequest.data.topicData.forEach(topic => topic.partitionData.forEach { partition =>
+      // 6.1 将 topic + partition 封装未 TopicPartition
       val topicPartition = new TopicPartition(topic.name, partition.index)
       // This caller assumes the type is MemoryRecords and that is true on current serialization
       // We cast the type to avoid causing big change to code base.
       // https://issues.apache.org/jira/browse/KAFKA-10698
+      // 6.2 获取 Topic + Partition 对应的数据
       val memoryRecords = partition.records.asInstanceOf[MemoryRecords]
       if (!authorizedTopics.contains(topicPartition.topic))
         unauthorizedTopicResponses += topicPartition -> new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
@@ -574,6 +587,7 @@ class KafkaApis(
       else
         try {
           ProduceRequest.validateRecords(request.header.apiVersion, memoryRecords)
+          // 6.3 合法的 TopicPartition 对应的记录
           authorizedRequestInfo += (topicPartition -> memoryRecords)
         } catch {
           case e: ApiException =>
@@ -656,18 +670,25 @@ class KafkaApis(
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
+      // 7 将校验通过的 TopicPartition 对应的记录写入 ReplicationManager
       replicaManager.appendRecords(
+        // 7.1 数据写入超时时间
         timeout = produceRequest.timeout.toLong,
+        // 7.2 kafka producer acks
         requiredAcks = produceRequest.acks,
+        // 7.3 是否内部 topic
         internalTopicsAllowed = internalTopicsAllowed,
         origin = AppendOrigin.Client,
+        // 7.4 合法的 TopicPartition 对应的数据
         entriesPerPartition = authorizedRequestInfo,
         requestLocal = requestLocal,
+        // 7.5 回调函数
         responseCallback = sendResponseCallback,
         recordConversionStatsCallback = processingStatsCallback)
 
       // if the request is put into the purgatory, it will have a held reference and hence cannot be garbage collected;
       // hence we clear its data here in order to let GC reclaim its memory since it is already appended to log
+      // 8 请求 request 数据
       produceRequest.clearPartitionRecords()
     }
   }
