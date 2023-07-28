@@ -58,6 +58,7 @@ public class Consumer extends ShutdownableThread {
         }
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
+        // 1 创建 KafkaConsumer
         consumer = new KafkaConsumer<>(props);
         this.topic = topic;
         this.numMessageToConsume = numMessageToConsume;
@@ -71,7 +72,9 @@ public class Consumer extends ShutdownableThread {
 
     @Override
     public void doWork() {
+        // 2 consumer 订阅 topic
         consumer.subscribe(Collections.singletonList(this.topic));
+        // 3 consumer 拉取数据
         ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofSeconds(1));
         for (ConsumerRecord<Integer, String> record : records) {
             System.out.println(groupId + " received message : from partition " + record.partition() + ", (" + record.key() + ", " + record.value() + ") at offset " + record.offset());

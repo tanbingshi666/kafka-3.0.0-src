@@ -181,10 +181,13 @@ class KafkaApis(
         case ApiKeys.CONTROLLED_SHUTDOWN => handleControlledShutdownRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request, requestLocal)
         case ApiKeys.OFFSET_FETCH => handleOffsetFetchRequest(request)
+        // 消费者发送 FIND_COORDINATOR 请求
         case ApiKeys.FIND_COORDINATOR => handleFindCoordinatorRequest(request)
+        // 消费者组中的消费者发送 JOIN_GROUP 请求
         case ApiKeys.JOIN_GROUP => handleJoinGroupRequest(request, requestLocal)
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request)
+        // 消费者组的 Leader 消费者 发送 SYNC_GROUP 请求
         case ApiKeys.SYNC_GROUP => handleSyncGroupRequest(request, requestLocal)
         case ApiKeys.DESCRIBE_GROUPS => handleDescribeGroupRequest(request)
         case ApiKeys.LIST_GROUPS => handleListGroupsRequest(request)
@@ -1432,6 +1435,7 @@ class KafkaApis(
     if (version < 4) {
       handleFindCoordinatorRequestLessThanV4(request)
     } else {
+      // 处理 FIND_COORDINATOR 请求
       handleFindCoordinatorRequestV4AndAbove(request)
     }
   }
@@ -1440,6 +1444,7 @@ class KafkaApis(
     val findCoordinatorRequest = request.body[FindCoordinatorRequest]
 
     val coordinators = findCoordinatorRequest.data.coordinatorKeys.asScala.map { key =>
+      // 1 寻找消费者组 ID 对应哪个 Broker Coordinator
       val (error, node) = getCoordinator(request, findCoordinatorRequest.data.keyType, key)
       new FindCoordinatorResponseData.Coordinator()
         .setKey(key)
@@ -1449,6 +1454,7 @@ class KafkaApis(
         .setPort(node.port)
     }
 
+    // 3 返回响应回调
     def createResponse(requestThrottleMs: Int): AbstractResponse = {
       val response = new FindCoordinatorResponse(
         new FindCoordinatorResponseData()
@@ -1459,6 +1465,7 @@ class KafkaApis(
       response
     }
 
+    // 2 返回响应给消费者客户端
     requestHelper.sendResponseMaybeThrottle(request, createResponse)
   }
 
@@ -1498,12 +1505,17 @@ class KafkaApis(
     else {
       val (partition, internalTopicName) = CoordinatorType.forId(keyType) match {
         case CoordinatorType.GROUP =>
+          // 1 计算消费者组的 hashcode 对应 __consumer_offsets 哪个分区
+          // key = 消费者组 ID GROUP_METADATA_TOPIC_NAME = __consumer_offsets
+          // 计算公式 = Utils.abs(groupId.hashCode) % groupMetadataTopicPartitionCount(50)
+          // 得到 __consumer_offsets 对应的分区 判断该分区的 Leader 在哪个 broker 返回 broker 信息给消费者
           (groupCoordinator.partitionFor(key), GROUP_METADATA_TOPIC_NAME)
 
         case CoordinatorType.TRANSACTION =>
           (txnCoordinator.partitionFor(key), TRANSACTION_STATE_TOPIC_NAME)
       }
 
+      // 2 获取 __consumer_offsets 的元数据信息
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName), request.context.listenerName)
 
       if (topicMetadata.headOption.isEmpty) {
@@ -1514,6 +1526,7 @@ class KafkaApis(
         if (topicMetadata.head.errorCode != Errors.NONE.code) {
           (Errors.COORDINATOR_NOT_AVAILABLE, Node.noNode)
         } else {
+          // 3 获取 __consumer_offsets leader 分区的 broker 信息
           val coordinatorEndpoint = topicMetadata.head.partitions.asScala
             .find(_.partitionIndex == partition)
             .filter(_.leaderId != MetadataResponse.NO_LEADER_ID)
@@ -1664,6 +1677,7 @@ class KafkaApis(
       val protocols = joinGroupRequest.data.protocols.valuesList.asScala.map(protocol =>
         (protocol.name, protocol.metadata)).toList
 
+      // GroupCoordinator 处理 JOIN_GROUP 请求
       groupCoordinator.handleJoinGroup(
         joinGroupRequest.data.groupId,
         joinGroupRequest.data.memberId,
@@ -1711,6 +1725,7 @@ class KafkaApis(
         assignmentMap += (assignment.memberId -> assignment.assignment)
       }
 
+      // GroupCoordinator 处理 SYNC_GROUP 请求
       groupCoordinator.handleSyncGroup(
         syncGroupRequest.data.groupId,
         syncGroupRequest.data.generationId,
