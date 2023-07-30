@@ -1076,6 +1076,7 @@ class Partition(val topicPartition: TopicPartition,
                   fetchOnlyFromLeader: Boolean,
                   minOneMessage: Boolean): LogReadInfo = inReadLock(leaderIsrUpdateLock) {
     // decide whether to only fetch from leader
+    // 1 获取 Partition 对应的 Log 对象
     val localLog = localLogWithEpochOrException(currentLeaderEpoch, fetchOnlyFromLeader)
 
     // Note we use the log end offset prior to the read. This ensures that any appends following
@@ -1125,7 +1126,9 @@ class Partition(val topicPartition: TopicPartition,
       }
     }
 
+    // 2 Log 数据读取
     val fetchedData = localLog.read(fetchOffset, maxBytes, fetchIsolation, minOneMessage)
+    // 3 封装返回
     LogReadInfo(
       fetchedData = fetchedData,
       divergingEpoch = None,

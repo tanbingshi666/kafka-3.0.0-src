@@ -179,6 +179,7 @@ class KafkaApis(
         case ApiKeys.STOP_REPLICA => handleStopReplicaRequest(request)
         case ApiKeys.UPDATE_METADATA => handleUpdateMetadataRequest(request, requestLocal)
         case ApiKeys.CONTROLLED_SHUTDOWN => handleControlledShutdownRequest(request)
+        // 消费者提交 offset 请求
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request, requestLocal)
         case ApiKeys.OFFSET_FETCH => handleOffsetFetchRequest(request)
         // 消费者发送 FIND_COORDINATOR 请求
@@ -953,6 +954,7 @@ class KafkaApis(
       processResponseCallback(Seq.empty)
     else {
       // call the replica manager to fetch messages from the local replica
+      // 执行拉取数据
       replicaManager.fetchMessages(
         fetchRequest.maxWait.toLong,
         fetchRequest.replicaId,
@@ -1533,6 +1535,7 @@ class KafkaApis(
             .flatMap(metadata => metadataCache.
               getAliveBrokerNode(metadata.leaderId, request.context.listenerName))
 
+          // 4 返回目标数据
           coordinatorEndpoint match {
             case Some(endpoint) =>
               (Errors.NONE, endpoint)

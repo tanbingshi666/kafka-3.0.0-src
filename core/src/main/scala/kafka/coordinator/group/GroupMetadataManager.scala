@@ -172,9 +172,12 @@ class GroupMetadataManager(brokerId: Int,
     })
 
   def startup(retrieveGroupMetadataTopicPartitionCount: () => Int, enableMetadataExpiration: Boolean): Unit = {
+    // 1 从 zk 获取 __consumer_offsets 主题分区数 默认 50
     groupMetadataTopicPartitionCount = retrieveGroupMetadataTopicPartitionCount()
+    // 2 启动 Kafka 调度器 默认一个线程
     scheduler.startup()
     if (enableMetadataExpiration) {
+      // 3 定时清除过期的消费者元数据 比如消费者提交 offset 请求老的
       scheduler.schedule(name = "delete-expired-group-metadata",
         fun = () => cleanupGroupMetadata(),
         period = config.offsetsRetentionCheckIntervalMs,

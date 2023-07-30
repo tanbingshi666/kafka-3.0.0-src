@@ -1041,6 +1041,7 @@ class ReplicaManager(val config: KafkaConfig,
     val fetchOnlyFromLeader = isFromFollower || (isFromConsumer && clientMetadata.isEmpty)
 
     def readFromLog(): Seq[(TopicPartition, LogReadResult)] = {
+      // 读取 Log
       val result = readFromLocalLog(
         replicaId = replicaId,
         fetchOnlyFromLeader = fetchOnlyFromLeader,
@@ -1054,6 +1055,7 @@ class ReplicaManager(val config: KafkaConfig,
       else result
     }
 
+    // 1 从 LogSegment 读取数据
     val logReadResults = readFromLog()
 
     // check if this fetch request can be satisfied right away
@@ -1078,6 +1080,7 @@ class ReplicaManager(val config: KafkaConfig,
     //                        3) has enough data to respond
     //                        4) some error happens while reading data
     //                        5) we found a diverging epoch
+    // 2 直接返回结果过客户端 否则注册提交延迟任务
     if (timeout <= 0 || fetchInfos.isEmpty || bytesReadable >= fetchMinBytes || errorReadingData || hasDivergingEpoch) {
       val fetchPartitionData = logReadResults.map { case (tp, result) =>
         val isReassignmentFetch = isFromFollower && isAddingReplica(tp, replicaId)
@@ -1133,6 +1136,7 @@ class ReplicaManager(val config: KafkaConfig,
             s"remaining response limit $limitBytes" +
             (if (minOneMessage) s", ignoring response/partition size limits" else ""))
 
+        // 1 获取读取分区
         val partition = getPartitionOrException(tp)
         val fetchTimeMs = time.milliseconds
 
@@ -1159,6 +1163,7 @@ class ReplicaManager(val config: KafkaConfig,
             exception = None)
         } else {
           // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
+          // 2 读取分区数据
           val readInfo: LogReadInfo = partition.readRecords(
             lastFetchedEpoch = fetchInfo.lastFetchedEpoch,
             fetchOffset = fetchInfo.fetchOffset,
@@ -1179,6 +1184,7 @@ class ReplicaManager(val config: KafkaConfig,
             readInfo.fetchedData
           }
 
+          // 3 封装读取数据并返回
           LogReadResult(info = fetchDataInfo,
             divergingEpoch = readInfo.divergingEpoch,
             highWatermark = readInfo.highWatermark,
@@ -1232,6 +1238,7 @@ class ReplicaManager(val config: KafkaConfig,
     var limitBytes = fetchMaxBytes
     val result = new mutable.ArrayBuffer[(TopicPartition, LogReadResult)]
     var minOneMessage = !hardMaxBytesLimit
+    // 读取数据
     readPartitionInfo.foreach { case (tp, fetchInfo) =>
       val readResult = read(tp, fetchInfo, limitBytes, minOneMessage)
       val recordBatchSize = readResult.info.records.sizeInBytes

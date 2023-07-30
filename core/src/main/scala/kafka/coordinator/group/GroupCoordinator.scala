@@ -106,6 +106,7 @@ class GroupCoordinator(val brokerId: Int,
    */
   def startup(retrieveGroupMetadataTopicPartitionCount: () => Int, enableMetadataExpiration: Boolean = true): Unit = {
     info("Starting up.")
+    // 启动 GroupMetadataManager
     groupManager.startup(retrieveGroupMetadataTopicPartitionCount, enableMetadataExpiration)
     isActive.set(true)
     info("Startup complete.")
@@ -1629,8 +1630,11 @@ object GroupCoordinator {
             replicaManager: ReplicaManager,
             time: Time,
             metrics: Metrics): GroupCoordinator = {
+    // 1 创建心跳时间轮 DelayedOperationPurgatory
     val heartbeatPurgatory = DelayedOperationPurgatory[DelayedHeartbeat]("Heartbeat", config.brokerId)
+    // 2 创建 rebalance 时间轮 DelayedOperationPurgatory
     val rebalancePurgatory = DelayedOperationPurgatory[DelayedRebalance]("Rebalance", config.brokerId)
+    // 3 创建 GroupCoordinator
     GroupCoordinator(config, replicaManager, heartbeatPurgatory, rebalancePurgatory, time, metrics)
   }
 
@@ -1653,14 +1657,18 @@ object GroupCoordinator {
             rebalancePurgatory: DelayedOperationPurgatory[DelayedRebalance],
             time: Time,
             metrics: Metrics): GroupCoordinator = {
+    // 1 获取 offset 配置
     val offsetConfig = this.offsetConfig(config)
+    // 2 获取 Group 配置
     val groupConfig = GroupConfig(groupMinSessionTimeoutMs = config.groupMinSessionTimeoutMs,
       groupMaxSessionTimeoutMs = config.groupMaxSessionTimeoutMs,
       groupMaxSize = config.groupMaxSize,
       groupInitialRebalanceDelayMs = config.groupInitialRebalanceDelay)
 
+    // 3 创建 GroupMetadataManager
     val groupMetadataManager = new GroupMetadataManager(config.brokerId, config.interBrokerProtocolVersion,
       offsetConfig, replicaManager, time, metrics)
+    // 4 创建 GroupCoordinator
     new GroupCoordinator(config.brokerId, groupConfig, offsetConfig, groupMetadataManager, heartbeatPurgatory,
       rebalancePurgatory, time, metrics)
   }

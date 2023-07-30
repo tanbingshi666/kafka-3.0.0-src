@@ -1242,6 +1242,10 @@ class Log(@volatile private var _dir: File,
       // We create the local variables to avoid race conditions with updates to the log.
       val endOffsetMetadata = nextOffsetMetadata
       val endOffset = endOffsetMetadata.messageOffset
+      // 一个 Log 对象就是管理者某个主题的某个分区下的所有 LogSegment
+      // LogSegments 就是管理所有的 LogSegment
+      // LogSegments 通过 跳表结构 ConcurrentSkipListMap 管理所有的 LogSegment
+      // 1 通过 startOffset 找到不大于 startOffset 对应的 LogSegment
       var segmentOpt = segments.floorSegment(startOffset)
 
       // return error on attempt to read beyond the log end offset or read below log start offset
@@ -1273,6 +1277,7 @@ class Log(@volatile private var _dir: File,
             if (maxOffsetMetadata.segmentBaseOffset == segment.baseOffset) maxOffsetMetadata.relativePositionInSegment
             else segment.size
 
+          // 2 从 Segment 读取数据
           fetchDataInfo = segment.read(startOffset, maxLength, maxPosition, minOneMessage)
           if (fetchDataInfo != null) {
             if (includeAbortedTxns)
@@ -1280,6 +1285,7 @@ class Log(@volatile private var _dir: File,
           } else segmentOpt = segments.higherSegment(baseOffset)
         }
 
+        // 3 返回数据
         if (fetchDataInfo != null) fetchDataInfo
         else {
           // okay we are beyond the end of the last segment with no data fetched although the start offset is in range,
